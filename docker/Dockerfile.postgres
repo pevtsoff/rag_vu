@@ -1,0 +1,18 @@
+FROM pgvector/pgvector:pg17
+
+COPY docker/pg_textsearch--1.0.sql /docker-entrypoint-initdb.d/20-pg_textsearch.sql
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        build-essential \
+        postgresql-server-dev-17 \
+        git \
+    && git config --global http.sslVerify false \
+    && git clone --depth 1 https://github.com/timescale/pg_textsearch.git /tmp/pg_textsearch \
+    && cd /tmp/pg_textsearch \
+    && make \
+    && make install \
+    && rm -rf /tmp/pg_textsearch \
+    && apt-get remove -y build-essential postgresql-server-dev-17 git \
+    && apt-get autoremove -y \
+    && rm -rf /var/lib/apt/lists/* -

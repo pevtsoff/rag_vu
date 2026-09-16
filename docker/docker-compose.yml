@@ -1,0 +1,129 @@
+services:
+  redis:
+    image: redis:7-alpine
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  postgres:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.postgres
+    container_name: rag_vu-postgres
+    env_file: ../.env
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    ports:
+      - "${PORT_PREFIX}432:5432"
+    volumes:
+      - rag_vu-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    command:
+      - postgres
+      - -c
+      - shared_preload_libraries=pg_textsearch
+
+  api:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    image: rag_vu-api
+    container_name: rag_vu-api
+    env_file: ../.env
+    ports:
+      - "${PORT_PREFIX}080:8000"
+    volumes:
+      - ../app:/app/app
+      - ../alembic:/app/alembic
+      - ../media:/app/media
+    environment:
+      DATABASE_URL: ${DATABASE_URL}
+      DATABASE_URL_SYNC: ${DATABASE_URL_SYNC}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  worker:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    image: rag_vu-api
+    container_name: rag_vu-worker
+    env_file: ../.env
+    environment:
+      DATABASE_URL: ${DATABASE_URL}
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/1
+      OLLAMA_BASE_URL: ${OLLAMA_DOCKER_BASE_URL:-http://host.docker.internal:11434}
+      HF_HOME: /hf-cache
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ../app:/app/app
+      - ../media:/app/media
+      - rag_vu-hf-cache:/hf-cache
+      - ../media/rapidocr-models:/usr/local/lib/python3.12/site-packages/rapidocr/models
+    command:
+      [
+        "celery",
+        "-A",
+        "app.services.background_jobs.celery_app:celery_app",
+        "worker",
+        "--loglevel=INFO",
+        "--concurrency=1",
+      ]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  query:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    image: rag_vu-api
+    container_name: rag_vu-query
+    env_file: ../.env
+    environment:
+      RAG_VU_API_BASE_URL: ${RAG_VU_API_BASE_URL:-http://localhost:${PORT_PREFIX}080}
+      OLLAMA_BASE_URL: ${OLLAMA_DOCKER_BASE_URL:-http://host.docker.internal:11434}
+      PYTHONPATH: /app
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "${PORT_PREFIX}000:8000"
+    volumes:
+      - ../app:/app/app
+    command:
+      - chainlit
+      - run
+      - app/services/query/chat.py
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      api:
+        condition: service_started
+    restart: unless-stopped
+
+volumes:
+  rag_vu-pgdata:
+  rag_vu-hf-cache:

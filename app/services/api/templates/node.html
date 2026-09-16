@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ title }}</title>
+  <style>
+    body {
+      max-width: 900px;
+      margin: 2rem auto;
+      padding: 0 1rem;
+      color: #202124;
+      font: 1rem/1.65 system-ui, sans-serif;
+    }
+    nav { color: #5f6368; font-size: .9rem; margin-bottom: 1rem; }
+    article { white-space: pre-wrap; overflow-wrap: anywhere; }
+    .document { color: #5f6368; }
+  </style>
+</head>
+<body>
+  {% if breadcrumbs %}
+  <nav aria-label="Breadcrumb">{{ breadcrumbs | join(" › ") }}</nav>
+  {% endif %}
+  <p class="document">{{ document_title }}</p>
+  <h1>{{ title }}</h1>
+  <article data-node-type="{{ node_type }}">{{ text }}</article>
+</body>
+</html>
