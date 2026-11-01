@@ -69,14 +69,23 @@ async def retrieve_article_context(session, document_id, article_path):
     article = article_result.first()
     if article and article[3]:
         article_node_id, title, breadcrumbs, text, file_name = article
+        sections_result = await session.execute(
+            statement.where(
+                Node.node_type.in_(("article_section", "article_part")),
+                cast(Node.path, Text).like(f"{article_path}.%"),
+            ).order_by(Node.path)
+        )
+        sections = sections_result.all()
+        if sections:
+            text = "\n\n".join([text, *(section[3] for section in sections if section[3])])
         return (
             build_retrieved_context(text, breadcrumbs, title, file_name),
-            [str(article_node_id)],
+            [str(article_node_id), *(str(section[0]) for section in sections)],
         )
 
     parts_result = await session.execute(
         statement.where(
-            Node.node_type == "article_part",
+            Node.node_type.in_(("article_section", "article_part")),
             cast(Node.path, Text).like(f"{article_path}.%"),
         ).order_by(Node.path)
     )

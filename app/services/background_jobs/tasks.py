@@ -1,6 +1,7 @@
 import asyncio
 import traceback
 from datetime import UTC, datetime
+from pathlib import Path
 from uuid import UUID
 
 from docling_core.types.doc import ImageRefMode
@@ -13,7 +14,7 @@ from app.models.db.pipeline import Pipeline, PipelineStages, PipelineStatus
 from app.services.background_jobs.celery_app import celery_app
 from app.services.background_jobs.exceptions import FileChunkingError, FileParsingError
 from app.services.chunking import process_document_chunks
-from app.services.parser.parser import build_nodes_from_docling, parse_document
+from app.services.parser.parser import build_nodes_from_docling, extract_image_nodes, parse_document
 
 
 def _error_details(stage_error: Exception) -> str:
@@ -36,11 +37,11 @@ async def _mark_failure(document_id: str, pipeline_id: str, stage: str, exc: Exc
     async with AsyncSessionLocal() as session:
         pipeline = await session.get(Pipeline, UUID(pipeline_id))
         document = await session.get(Document, UUID(document_id))
-        if pipeline:
+        if pipeline and pipeline.status == PipelineStatus.IN_PROGRESS:
             pipeline.status = PipelineStatus.FAILED
             pipeline.error_stage = stage
             pipeline.error_message = _error_details(exc)
-        if document:
+        if document and pipeline and pipeline.status == PipelineStatus.FAILED:
             document.status = PipelineStatus.FAILED
         await session.commit()
 
@@ -64,6 +65,9 @@ async def _parse_document(document_id: str, pipeline_id: str) -> None:
         if not pipeline or not document:
             raise FileParsingError("Pipeline or document record was not found")
 
+        if pipeline.status != PipelineStatus.IN_PROGRESS:
+            return
+
         pipeline.status = PipelineStatus.IN_PROGRESS
         pipeline.error_message = None
         pipeline.error_stage = None
@@ -86,7 +90,16 @@ async def _parse_document(document_id: str, pipeline_id: str) -> None:
             )
 
             await session.execute(delete(Node).where(Node.document_id == document.id))
-            parsed_nodes = build_nodes_from_docling(docling_document, title or document.file_name)
+            document_title = title or document.file_name
+            parsed_nodes = build_nodes_from_docling(docling_document, document_title)
+            parsed_nodes.extend(
+                await asyncio.to_thread(
+                    extract_image_nodes,
+                    docling_document,
+                    Path(document.file_path).parent,
+                    document_title,
+                )
+            )
 
             session.add_all(
                 Node(
@@ -108,6 +121,7 @@ async def _parse_document(document_id: str, pipeline_id: str) -> None:
             pipeline.last_parsed = pipeline.parsed_at
             document.status = PipelineStatus.IN_PROGRESS
             await session.commit()
+            chunk_document_task.apply_async(args=(document_id, pipeline_id), queue="chunking")
 
         except Exception:
             await session.rollback()
@@ -125,6 +139,12 @@ def chunk_document_task(document_id: str, pipeline_id: str) -> str:
         raise error from exc
 
 
+@celery_app.task(name="ingestion.start_parsing")
+def start_parsing_task(document_id: str, pipeline_id: str) -> str:
+    parse_document_task.apply_async(args=(document_id, pipeline_id), queue="parsing")
+    return document_id
+
+
 async def _chunk_document(document_id: str, pipeline_id: str) -> None:
     async with AsyncSessionLocal() as session:
         pipeline = await session.get(Pipeline, UUID(pipeline_id))
@@ -132,6 +152,9 @@ async def _chunk_document(document_id: str, pipeline_id: str) -> None:
 
         if not pipeline or not document:
             raise FileChunkingError("Pipeline or document record was not found")
+
+        if pipeline.status != PipelineStatus.IN_PROGRESS:
+            return
 
         pipeline.status = PipelineStatus.IN_PROGRESS
         pipeline.error_message = None

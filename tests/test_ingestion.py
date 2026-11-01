@@ -59,6 +59,10 @@ except ImportError:
         def __init__(self, **_kwargs):
             pass
 
+    class FakeHeadingHierarchyOptions:
+        pass
+
+    pipeline_options_module.HeadingHierarchyOptions = FakeHeadingHierarchyOptions
     pipeline_options_module.PdfPipelineOptions = FakePdfPipelineOptions
     pipeline_options_module.TesseractCliOcrOptions = FakeTesseractCliOcrOptions
     converter_module = types.ModuleType("docling.document_converter")
@@ -69,6 +73,11 @@ except ImportError:
     sys.modules.setdefault("docling.datamodel.base_models", base_models_module)
     sys.modules.setdefault("docling.datamodel.pipeline_options", pipeline_options_module)
     sys.modules.setdefault("docling.document_converter", converter_module)
+
+from docling.datamodel import pipeline_options as pipeline_options_module
+
+if not hasattr(pipeline_options_module, "HeadingHierarchyOptions"):
+    pipeline_options_module.HeadingHierarchyOptions = lambda **_kwargs: SimpleNamespace()
 
 try:
     import docling_core.types.doc  # noqa: F401
@@ -148,21 +157,26 @@ class TestDoclingParser(unittest.TestCase):
         self.assertIsNotNone(structured_document)
 
     def test_native_headings_build_page_section_hierarchy(self):
-        def item(label, text, level=1, page=2):
+        def item(label, text, parent=None, page=2):
             return SimpleNamespace(
                 label=label,
                 text=text,
-                level=level,
+                self_ref=f"#/{text}",
+                parent=(
+                    SimpleNamespace(resolve=lambda doc, value=parent: value) if parent else None
+                ),
                 prov=[SimpleNamespace(page_no=page)],
             )
 
+        section = item("section_header", "Раздел I")
+        article = item("section_header", "Статья 1", parent=section)
         document = SimpleNamespace(
             iterate_items=lambda **_: iter(
                 [
-                    (item("section_header", "Раздел I"), 0),
-                    (item("text", "Section body"), 1),
-                    (item("section_header", "Статья 1", level=2), 1),
-                    (item("text", "Article body"), 2),
+                    (section, 0),
+                    (item("text", "Section body", parent=section), 1),
+                    (article, 1),
+                    (item("text", "Article body", parent=article), 2),
                 ]
             )
         )
@@ -171,6 +185,30 @@ class TestDoclingParser(unittest.TestCase):
         self.assertEqual(nodes[0].path, "p000002.h1_razdel_i")
         self.assertEqual(nodes[1].breadcrumbs, ["Law", "Page 2", "Раздел I", "Статья 1"])
         self.assertEqual(nodes[1].path, "p000002.h1_razdel_i.h1_statya_1")
+
+    def test_plain_text_legal_heading_is_not_promoted_to_section(self):
+        def item(label, text, parent=None):
+            return SimpleNamespace(
+                label=label,
+                text=text,
+                self_ref=f"#/{text}",
+                parent=(
+                    SimpleNamespace(resolve=lambda doc, value=parent: value) if parent else None
+                ),
+                prov=[SimpleNamespace(page_no=2)],
+            )
+
+        article = item("text", "Статья 1. Воинская обязанность")
+        body = item("text", "Воинская обязанность граждан предусматривает:", parent=article)
+        document = SimpleNamespace(
+            iterate_items=lambda **_: iter([(article, 0), (body, 1)])
+        )
+
+        nodes = build_nodes_from_docling(document, "Law")
+
+        self.assertEqual([node.node_type for node in nodes], ["preamble"])
+        self.assertNotIn("article", [node.node_type for node in nodes])
+        self.assertIn(article.text, nodes[0].text)
 
     def test_rejects_missing_input(self):
         with self.assertRaisesRegex(FileNotFoundError, "does not exist"):
@@ -205,13 +243,35 @@ class FakeSession:
         self.commits += 1
 
 
+class ActivePipelineSession(FakeSession):
+    def __init__(self, document, pipeline):
+        super().__init__(document)
+        self.pipeline = pipeline
+
+    async def execute(self, statement):
+        entity = statement.column_descriptions[0].get("entity")
+        return FakeResult(self.pipeline if entity is Pipeline else self.document)
+
+
+class FakePdfUpload:
+    filename = "law-copy.pdf"
+    content_type = "application/pdf"
+
+    def __init__(self):
+        self.read_count = 0
+
+    async def read(self, _size):
+        self.read_count += 1
+        return b"pdf data" if self.read_count == 1 else b""
+
+
 class TestPipelineRerun(unittest.IsolatedAsyncioTestCase):
     async def test_parsing_rerun_enqueues_full_pipeline(self):
         document = Document(id=uuid4(), file_name="law.pdf", status="SUCCEEDED")
         session = FakeSession(document)
         with patch("app.services.api.documents.common.enqueue_pipeline") as enqueue:
             response = await rerun_service.rerun_pipeline_from_stage(
-                str(document.id), PipelineStages.PARSING, session
+                str(document.id), PipelineStages.PARSING, session, force_run=True
             )
 
         pipeline = session.added[0]
@@ -221,12 +281,48 @@ class TestPipelineRerun(unittest.IsolatedAsyncioTestCase):
         enqueue.assert_called_once_with(str(document.id), str(pipeline.id), from_stage="parsing")
         self.assertEqual(response.pipeline_id, str(pipeline.id))
 
+    async def test_rerun_reuses_active_pipeline_without_force(self):
+        document = Document(id=uuid4(), file_name="law.pdf", status="IN_PROGRESS")
+        active = Pipeline(
+            id=uuid4(), document_id=document.id, stage=PipelineStages.PARSING,
+            status=PipelineStatus.IN_PROGRESS,
+        )
+        session = ActivePipelineSession(document, active)
+        with patch("app.services.api.documents.common.enqueue_pipeline") as enqueue:
+            response = await rerun_service.rerun_pipeline_from_stage(
+                str(document.id), PipelineStages.PARSING, session
+            )
+
+        self.assertEqual(response.pipeline_id, str(active.id))
+        self.assertEqual(session.added, [])
+        enqueue.assert_not_called()
+
+    async def test_force_rerun_cancels_active_and_enqueues_new_pipeline(self):
+        document = Document(id=uuid4(), file_name="law.pdf", status="IN_PROGRESS")
+        active = Pipeline(
+            id=uuid4(), document_id=document.id, stage=PipelineStages.PARSING,
+            status=PipelineStatus.IN_PROGRESS,
+        )
+        session = ActivePipelineSession(document, active)
+        with patch("app.services.api.documents.common.enqueue_pipeline") as enqueue:
+            response = await rerun_service.rerun_pipeline_from_stage(
+                str(document.id), PipelineStages.PARSING, session, force_run=True
+            )
+
+        replacement = session.added[0]
+        self.assertEqual(active.status, PipelineStatus.CANCELLED)
+        self.assertEqual(replacement.status, PipelineStatus.IN_PROGRESS)
+        self.assertNotEqual(response.pipeline_id, str(active.id))
+        enqueue.assert_called_once_with(
+            str(document.id), str(replacement.id), from_stage="parsing"
+        )
+
     async def test_chunking_rerun_only_enqueues_chunking(self):
         document = Document(id=uuid4(), file_name="law.pdf", status="SUCCEEDED")
         session = FakeSession(document)
         with patch("app.services.api.documents.common.enqueue_pipeline") as enqueue:
             await rerun_service.rerun_pipeline_from_stage(
-                str(document.id), PipelineStages.CHUNKING, session
+                str(document.id), PipelineStages.CHUNKING, session, force_run=True
             )
 
         self.assertEqual(session.added[0].stage, PipelineStages.CHUNKING)
@@ -234,6 +330,14 @@ class TestPipelineRerun(unittest.IsolatedAsyncioTestCase):
         enqueue.assert_called_once_with(
             str(document.id), str(session.added[0].id), from_stage="chunking"
         )
+
+    async def test_rerun_without_active_pipeline_returns_conflict(self):
+        document = Document(id=uuid4(), file_name="law.pdf", status="SUCCEEDED")
+        with self.assertRaises(HTTPException) as raised:
+            await rerun_service.rerun_pipeline_from_stage(
+                str(document.id), PipelineStages.PARSING, FakeSession(document)
+            )
+        self.assertEqual(raised.exception.status_code, 409)
 
     async def test_unknown_stage_is_rejected(self):
         with self.assertRaises(ValueError):
@@ -277,6 +381,70 @@ class TestPipelineRerun(unittest.IsolatedAsyncioTestCase):
             enqueue.assert_called_once_with(
                 str(document.id), str(pipeline.id), from_stage="parsing"
             )
+
+    async def test_duplicate_upload_reuses_active_pipeline_without_force(self):
+        document = Document(id=uuid4(), file_name="law.pdf", status="IN_PROGRESS")
+        active = Pipeline(
+            id=uuid4(), document_id=document.id, stage=PipelineStages.PARSING,
+            status=PipelineStatus.IN_PROGRESS,
+        )
+
+        with TemporaryDirectory() as directory:
+            session = ActivePipelineSession(document, active)
+            with (
+                patch.object(upload_service.settings, "upload_path", directory),
+                patch("app.services.api.documents.common.enqueue_pipeline") as enqueue,
+            ):
+                response = await upload_service.upload_document(FakePdfUpload(), session)
+
+        self.assertTrue(response.duplicate)
+        self.assertEqual(response.pipeline_id, str(active.id))
+        self.assertEqual(session.added, [])
+        enqueue.assert_not_called()
+
+    async def test_duplicate_upload_without_active_pipeline_creates_one(self):
+        document = Document(id=uuid4(), file_name="law.pdf", status="SUCCEEDED")
+        with TemporaryDirectory() as directory:
+            session = FakeSession(document)
+            with (
+                patch.object(upload_service.settings, "upload_path", directory),
+                patch("app.services.api.documents.common.enqueue_pipeline") as enqueue,
+            ):
+                response = await upload_service.upload_document(FakePdfUpload(), session)
+
+        self.assertTrue(response.duplicate)
+        pipeline = session.added[0]
+        self.assertEqual(response.pipeline_id, str(pipeline.id))
+        self.assertEqual(pipeline.status, PipelineStatus.IN_PROGRESS)
+        enqueue.assert_called_once_with(
+            str(document.id), str(pipeline.id), from_stage="parsing"
+        )
+
+    async def test_force_duplicate_upload_cancels_active_and_queues_new_pipeline(self):
+        document = Document(id=uuid4(), file_name="law.pdf", status="IN_PROGRESS")
+        active = Pipeline(
+            id=uuid4(), document_id=document.id, stage=PipelineStages.PARSING,
+            status=PipelineStatus.IN_PROGRESS,
+        )
+
+        with TemporaryDirectory() as directory:
+            session = ActivePipelineSession(document, active)
+            with (
+                patch.object(upload_service.settings, "upload_path", directory),
+                patch("app.services.api.documents.common.enqueue_pipeline") as enqueue,
+            ):
+                response = await upload_service.upload_document(
+                    FakePdfUpload(), session, force_run=True
+                )
+
+        replacement = session.added[0]
+        self.assertTrue(response.duplicate)
+        self.assertEqual(active.status, PipelineStatus.CANCELLED)
+        self.assertEqual(replacement.status, PipelineStatus.IN_PROGRESS)
+        self.assertEqual(response.pipeline_id, str(replacement.id))
+        enqueue.assert_called_once_with(
+            str(document.id), str(replacement.id), from_stage="parsing"
+        )
 
 
 class TestGenericDocumentChunking(unittest.TestCase):

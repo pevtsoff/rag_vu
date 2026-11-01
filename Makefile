@@ -1,4 +1,4 @@
-.PHONY: help migrate migrate-create migrate-up up down restart logs flush build lint
+.PHONY: help migrate migrate-create migrate-up up down restart recreate logs flush build lint
 
 help:
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-20s\033[0m %s\n", $$1, $$2}'
@@ -19,7 +19,7 @@ migrate-history: ## Show migration history
 	docker compose -f docker/docker-compose.yml run --rm api alembic history
 
 up: ## Start the stack
-	docker compose -f docker/docker-compose.yml up -d
+	docker compose -f docker/docker-compose.yml up -d --force-recreate
 
 build: ## Rebuild images and start the stack
 	docker compose -f docker/docker-compose.yml up -d --build

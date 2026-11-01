@@ -44,9 +44,9 @@ The complete interactive schema is available at `/docs` (Swagger UI), `/redoc` (
 
 ### Documents, API v1
 
-- `POST /api/v1/documents/upload` — upload a file as multipart form data using the required `file` field. Returns document and pipeline IDs, filename, status, and whether the upload is a duplicate.
+- `POST /api/v1/documents/upload` — upload a file as multipart form data using the required `file` field. An identical upload returns its active pipeline; pass `force_run=true` to cancel the active pipeline and start a new one. A new document always gets its initial pipeline.
 - `GET /api/v1/documents/{doc_id}` — retrieve document metadata and processing status.
-- `GET /api/v1/documents/{doc_id}/rerun/{stage}` — enqueue a pipeline rerun from a stage. The accepted `PipelineStages` values are `uploading`, `parsing`, and `chunking`. Parsing continues through chunking and embedding; chunking recreates embeddings from the existing parse.
+- `GET /api/v1/documents/{doc_id}/rerun/{stage}?force_run=true` — force a pipeline rerun from a stage, cancelling any active run first. Without `force_run=true`, the endpoint returns the active pipeline or responds with `409` if none is running. The accepted `PipelineStages` values are `uploading`, `parsing`, and `chunking`. Parsing continues through chunking and embedding; chunking recreates embeddings from the existing parse.
 - `POST /api/v1/documents/search` — submit JSON `{"query": "...", "top_k": 5}` to search documents; `top_k` must be between 1 and 100. Returns a list of matches with IDs, content, and scores.
 - `GET /api/v1/nodes/{node_id}/html` — return the rendered HTML for a source node. `node_id` must be a UUID; returns 404 if the node is not found.
 
