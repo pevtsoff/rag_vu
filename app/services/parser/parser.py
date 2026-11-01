@@ -15,6 +15,8 @@ from docling.document_converter import DocumentConverter, PdfFormatOption
 
 from app.models.services.parsed_node import ParsedNode
 
+_ARTICLE_HEADING = re.compile(r"^(?:статья|article)\s+\d+(?:\.\d+)?\b", re.IGNORECASE)
+
 
 def _docling_label(item: Any) -> str:
     label = getattr(item, "label", "")
@@ -110,6 +112,8 @@ def _append_docling_item(
     page = _page_number(item)
     if _docling_label(item) == "section_header" and text:
         _append_section_header(item, text, title, page, nodes, stack, sibling_counts)
+    elif _is_article_part(item, stack):
+        _append_article_part(item, text, stack, nodes)
     elif text and stack:
         stack[-1]["node"].text += "\n\n" + text
     elif text:
@@ -127,10 +131,48 @@ def _append_section_header(
     parent_key = stack[-1]["key"] if stack else page_label
     ordinal = sibling_counts.get(parent_key, 0) + 1
     sibling_counts[parent_key] = ordinal
-    node = _make_section_node(text, title, page, stack, ordinal, page_label)
+    node_type = "article" if _ARTICLE_HEADING.match(text) else "section"
+    node = _make_section_node(text, title, page, stack, ordinal, page_label, node_type)
     nodes.append(node)
-    stack.append({"level": level, "title": text, "key": f"{parent_key}.h{ordinal}",
-                  "ordinal": ordinal, "node": node})
+    stack.append(
+        {
+            "level": level,
+            "title": text,
+            "key": f"{parent_key}.h{ordinal}",
+            "ordinal": ordinal,
+            "node": node,
+            "path": node.path,
+            "node_type": node_type,
+            "breadcrumbs": node.breadcrumbs,
+            "parts": 0,
+        }
+    )
+
+
+def _is_article_part(item: Any, stack: list[dict[str, Any]]) -> bool:
+    return bool(
+        stack
+        and stack[-1]["node_type"] == "article"
+        and _docling_label(item) == "list_item"
+        and getattr(item, "enumerated", False)
+    )
+
+
+def _append_article_part(
+    item: Any, text: str, stack: list[dict[str, Any]], nodes: list[ParsedNode],
+) -> None:
+    article = stack[-1]
+    article["parts"] += 1
+    marker = str(getattr(item, "marker", "") or article["parts"])
+    nodes.append(
+        ParsedNode(
+            f"Part {marker}",
+            text,
+            [*article["breadcrumbs"], f"Part {marker}"],
+            f"{article['path']}.p{article['parts']}",
+            "article_part",
+        )
+    )
 
 
 def _prepend_preambles(
@@ -147,7 +189,7 @@ def _prepend_preambles(
 
 def _make_section_node(
     text: str, title: str, page: int | None, stack: list[dict[str, Any]],
-    ordinal: int, page_label: str,
+    ordinal: int, page_label: str, node_type: str,
 ) -> ParsedNode:
     ancestors = [entry["title"] for entry in stack]
     breadcrumbs = [title]
@@ -163,7 +205,7 @@ def _make_section_node(
         text,
         breadcrumbs,
         ".".join([page_label, *heading_path]),
-        "section",
+        node_type,
     )
 
 
@@ -209,14 +251,26 @@ def extract_image_nodes(document: Any, document_folder: str | Path, title: str) 
 
 
 def _picture_items(document: Any) -> list[Any]:
-    return [item for item, _ in document.iterate_items(with_groups=False) if _docling_label(item) in {"picture", "figure"}]
+    return [
+        item
+        for item, _ in document.iterate_items(with_groups=False)
+        if _docling_label(item) in {"picture", "figure"}
+    ]
 
 
 def _image_node(path: Path, image: Any, index: int, title: str, item: Any) -> ParsedNode:
     buffer = io.BytesIO()
     image.save(buffer, format="PNG")
-    result = subprocess.run(["tesseract", "stdin", "stdout", "-l", "rus+eng"], input=buffer.getvalue(), capture_output=True, check=True)
+    result = subprocess.run(
+        ["tesseract", "stdin", "stdout", "-l", "rus+eng"],
+        input=buffer.getvalue(),
+        capture_output=True,
+        check=True,
+    )
     text = result.stdout.decode("utf-8").strip()
     page = _page_number(item)
     breadcrumbs = [title, *([f"Page {page}"] if page else []), f"Image {index}"]
-    return ParsedNode(f"Image {index}", text, breadcrumbs, f"img{index}_{_ltree_label(path.stem, 'image')}", "image")
+    path_label = _ltree_label(path.stem, "image")
+    return ParsedNode(
+        f"Image {index}", text, breadcrumbs, f"img{index}_{path_label}", "image"
+    )
