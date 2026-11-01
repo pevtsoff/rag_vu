@@ -157,21 +157,26 @@ class TestDoclingParser(unittest.TestCase):
         self.assertIsNotNone(structured_document)
 
     def test_native_headings_build_page_section_hierarchy(self):
-        def item(label, text, level=1, page=2):
+        def item(label, text, parent=None, page=2):
             return SimpleNamespace(
                 label=label,
                 text=text,
-                level=level,
+                self_ref=f"#/{text}",
+                parent=(
+                    SimpleNamespace(resolve=lambda doc, value=parent: value) if parent else None
+                ),
                 prov=[SimpleNamespace(page_no=page)],
             )
 
+        section = item("section_header", "Раздел I")
+        article = item("section_header", "Статья 1", parent=section)
         document = SimpleNamespace(
             iterate_items=lambda **_: iter(
                 [
-                    (item("section_header", "Раздел I"), 0),
-                    (item("text", "Section body"), 1),
-                    (item("section_header", "Статья 1", level=2), 1),
-                    (item("text", "Article body"), 2),
+                    (section, 0),
+                    (item("text", "Section body", parent=section), 1),
+                    (article, 1),
+                    (item("text", "Article body", parent=article), 2),
                 ]
             )
         )
@@ -180,6 +185,31 @@ class TestDoclingParser(unittest.TestCase):
         self.assertEqual(nodes[0].path, "p000002.h1_razdel_i")
         self.assertEqual(nodes[1].breadcrumbs, ["Law", "Page 2", "Раздел I", "Статья 1"])
         self.assertEqual(nodes[1].path, "p000002.h1_razdel_i.h1_statya_1")
+
+    def test_plain_text_legal_heading_builds_article_parent(self):
+        def item(label, text, parent=None):
+            return SimpleNamespace(
+                label=label,
+                text=text,
+                self_ref=f"#/{text}",
+                parent=(
+                    SimpleNamespace(resolve=lambda doc, value=parent: value) if parent else None
+                ),
+                prov=[SimpleNamespace(page_no=2)],
+            )
+
+        article = item("text", "Статья 1. Воинская обязанность")
+        body = item("text", "Воинская обязанность граждан предусматривает:", parent=article)
+        document = SimpleNamespace(
+            iterate_items=lambda **_: iter([(article, 0), (body, 1)])
+        )
+
+        nodes = build_nodes_from_docling(document, "Law")
+
+        self.assertEqual([node.node_type for node in nodes], ["article"])
+        self.assertEqual(nodes[0].title, "Статья 1. Воинская обязанность")
+        self.assertIn("Воинская обязанность граждан", nodes[0].text)
+        self.assertEqual(nodes[0].breadcrumbs, ["Law", "Page 2", article.text])
 
     def test_rejects_missing_input(self):
         with self.assertRaisesRegex(FileNotFoundError, "does not exist"):
