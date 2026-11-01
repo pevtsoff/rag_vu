@@ -14,20 +14,29 @@ from app.services.api.documents.common import dispatch_pipeline, pipeline_stage_
 
 
 async def rerun_pipeline_from_stage(
-    doc_id: str, stage: PipelineStages, session: AsyncSession
+    doc_id: str, stage: PipelineStages, session: AsyncSession, force_run: bool = False
 ) -> RerunPipeline:
     document = await _find_document(doc_id, session)
+    active = await _active_pipeline(document.id, session)
+    if not force_run:
+        if active:
+            return _rerun_response(document, active)
+        raise HTTPException(status_code=409, detail="No pipeline is currently in progress")
     previous = await _latest_pipeline(document.id, session)
     pipeline = _new_rerun_pipeline(document, previous, stage)
+    if active:
+        active.status = PipelineStatus.CANCELLED
     session.add(pipeline)
 
     document.status = PipelineStatus.IN_PROGRESS
     await session.commit()
     await dispatch_pipeline(document, pipeline, session, stage)
+    return _rerun_response(document, pipeline)
+
+
+def _rerun_response(document: Document, pipeline: Pipeline) -> RerunPipeline:
     return RerunPipeline(
-        document_id=str(document.id),
-        pipeline_id=str(pipeline.id),
-        status=pipeline.status,
+        document_id=str(document.id), pipeline_id=str(pipeline.id), status=pipeline.status
     )
 
 
@@ -37,11 +46,23 @@ async def _find_document(doc_id: str, session: AsyncSession) -> Document:
         document_id = UUID(doc_id)
     except (ValueError, TypeError) as exc:
         raise HTTPException(status_code=404, detail="Document not found") from exc
-    result = await session.execute(select(Document).where(Document.id == document_id))
+    result = await session.execute(
+        select(Document).where(Document.id == document_id).with_for_update()
+    )
     document = result.scalar_one_or_none()
     if document is None:
         raise HTTPException(status_code=404, detail="Document not found")
     return document
+
+
+async def _active_pipeline(document_id: UUID, session: AsyncSession) -> Pipeline | None:
+    result = await session.execute(
+        select(Pipeline).where(
+            Pipeline.document_id == document_id,
+            Pipeline.status == PipelineStatus.IN_PROGRESS,
+        )
+    )
+    return result.scalar_one_or_none()
 
 
 async def _latest_pipeline(document_id: UUID, session: AsyncSession) -> Pipeline | None:

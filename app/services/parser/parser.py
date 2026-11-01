@@ -219,6 +219,7 @@ def parse_document(path: str | Path) -> tuple[str, Any]:
     # default converters.
     pdf_options = PdfPipelineOptions()
     pdf_options.heading_hierarchy_options = HeadingHierarchyOptions(enabled=True)
+    pdf_options.generate_picture_images = True
     pdf_options.do_ocr = True
     pdf_options.ocr_options = TesseractCliOcrOptions(lang=["rus", "eng"])
     converter = DocumentConverter(

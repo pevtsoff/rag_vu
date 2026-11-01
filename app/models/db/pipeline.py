@@ -3,7 +3,7 @@ import uuid
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, String, Text, Uuid
+from sqlalchemy import Boolean, DateTime, ForeignKey, Index, String, Text, Uuid, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.model_base import TimeBase
@@ -22,6 +22,7 @@ class PipelineStatus(enum.StrEnum):
     IN_PROGRESS = "IN_PROGRESS"
     SUCCEEDED = "SUCCEEDED"
     FAILED = "FAILED"
+    CANCELLED = "CANCELLED"
 
 
 # Preserve the spelling used in the initial API proposal for import compatibility.
@@ -32,6 +33,14 @@ class Pipeline(TimeBase):
     """One ingestion attempt for a document, including reruns."""
 
     __tablename__ = "pipelines"
+    __table_args__ = (
+        Index(
+            "uq_pipelines_one_in_progress_per_document",
+            "document_id",
+            unique=True,
+            postgresql_where=text("status = 'IN_PROGRESS'"),
+        ),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
     document_id: Mapped[uuid.UUID] = mapped_column(

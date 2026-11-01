@@ -24,18 +24,21 @@ router = APIRouter(prefix="/documents", tags=["documents"])
 
 @router.post("/upload", response_model=UploadDocument)
 async def upload_document_route(
-    file: UploadFile = File(...), session: AsyncSession = Depends(get_simple_session)
+    file: UploadFile = File(...),
+    force_run: bool = False,
+    session: AsyncSession = Depends(get_simple_session),
 ):
-    return await upload_document(file, session)
+    return await upload_document(file, session, force_run=force_run)
 
 
 @router.get("/{doc_id}/rerun/{stage}", response_model=RerunPipeline)
 async def rerun_document_stage_route(
     doc_id: str,
     stage: PipelineStages,
+    force_run: bool = False,
     session: AsyncSession = Depends(get_simple_session),
 ):
-    return await rerun_pipeline_from_stage(doc_id, stage, session)
+    return await rerun_pipeline_from_stage(doc_id, stage, session, force_run=force_run)
 
 
 @router.get("/{doc_id}", response_model=DocumentResponse)

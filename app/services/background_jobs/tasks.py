@@ -37,11 +37,11 @@ async def _mark_failure(document_id: str, pipeline_id: str, stage: str, exc: Exc
     async with AsyncSessionLocal() as session:
         pipeline = await session.get(Pipeline, UUID(pipeline_id))
         document = await session.get(Document, UUID(document_id))
-        if pipeline:
+        if pipeline and pipeline.status == PipelineStatus.IN_PROGRESS:
             pipeline.status = PipelineStatus.FAILED
             pipeline.error_stage = stage
             pipeline.error_message = _error_details(exc)
-        if document:
+        if document and pipeline and pipeline.status == PipelineStatus.FAILED:
             document.status = PipelineStatus.FAILED
         await session.commit()
 
@@ -64,6 +64,9 @@ async def _parse_document(document_id: str, pipeline_id: str) -> None:
 
         if not pipeline or not document:
             raise FileParsingError("Pipeline or document record was not found")
+
+        if pipeline.status != PipelineStatus.IN_PROGRESS:
+            return
 
         pipeline.status = PipelineStatus.IN_PROGRESS
         pipeline.error_message = None
@@ -149,6 +152,9 @@ async def _chunk_document(document_id: str, pipeline_id: str) -> None:
 
         if not pipeline or not document:
             raise FileChunkingError("Pipeline or document record was not found")
+
+        if pipeline.status != PipelineStatus.IN_PROGRESS:
+            return
 
         pipeline.status = PipelineStatus.IN_PROGRESS
         pipeline.error_message = None

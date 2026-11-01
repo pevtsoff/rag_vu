@@ -18,18 +18,21 @@ from app.services.background_jobs.exceptions import FileUploadError
 from app.settings import settings
 
 
-async def upload_document(file: UploadFile, session: AsyncSession) -> UploadDocument:
+async def upload_document(
+    file: UploadFile, session: AsyncSession, force_run: bool = False
+) -> UploadDocument:
     """Save an upload, create its pipeline, and dispatch processing."""
     filename = Path(file.filename or "upload").name
     upload_root = Path(settings.upload_path).resolve()
     temporary_path, sha256, size = await _stage_upload(file, upload_root)
-    document, pipeline, duplicate = await _save_upload(
-        file, session, filename, upload_root, temporary_path, sha256, size
+    document, pipeline, duplicate, created = await _save_upload(
+        file, session, filename, upload_root, temporary_path, sha256, size, force_run
     )
-    await dispatch_pipeline(document, pipeline, session, PipelineStages.PARSING)
+    if pipeline is not None and created:
+        await dispatch_pipeline(document, pipeline, session, PipelineStages.PARSING)
     return UploadDocument(
         id=str(document.id),
-        pipeline_id=str(pipeline.id),
+        pipeline_id=str(pipeline.id) if pipeline is not None else None,
         filename=document.file_name,
         status=document.status,
         duplicate=duplicate,
@@ -63,13 +66,19 @@ async def _save_upload(
     temporary_path: Path,
     sha256: str,
     size: int,
-) -> tuple[Document, Pipeline, bool]:
-    result = await session.execute(select(Document).where(Document.sha256 == sha256))
+    force_run: bool,
+) -> tuple[Document, Pipeline | None, bool, bool]:
+    result = await session.execute(
+        select(Document).where(Document.sha256 == sha256).with_for_update()
+    )
     document = result.scalar_one_or_none()
     if document:
         temporary_path.unlink(missing_ok=True)
-        return document, await _create_upload_pipeline(session, document), True
-    return await _persist_new_upload(file, session, filename, upload_root, temporary_path, sha256, size)
+        pipeline, created = await _existing_upload_pipeline(session, document, force_run)
+        return document, pipeline, True, created
+    return await _persist_new_upload(
+        file, session, filename, upload_root, temporary_path, sha256, size, force_run
+    )
 
 
 async def _persist_new_upload(
@@ -80,7 +89,8 @@ async def _persist_new_upload(
     temporary_path: Path,
     sha256: str,
     size: int,
-) -> tuple[Document, Pipeline, bool]:
+    force_run: bool,
+) -> tuple[Document, Pipeline, bool, bool]:
     document_id = uuid4()
     path = upload_root / str(document_id) / filename
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -94,8 +104,8 @@ async def _persist_new_upload(
     except IntegrityError as exc:
         await session.rollback()
         path.unlink(missing_ok=True)
-        return await _recover_duplicate(session, sha256, exc)
-    return document, pipeline, False
+        return await _recover_duplicate(session, sha256, exc, force_run)
+    return document, pipeline, False, True
 
 
 def _new_document(
@@ -114,21 +124,41 @@ def _new_document(
 
 
 async def _recover_duplicate(
-    session: AsyncSession, sha256: str, conflict: IntegrityError
-) -> tuple[Document, Pipeline, bool]:
-    result = await session.execute(select(Document).where(Document.sha256 == sha256))
+    session: AsyncSession, sha256: str, conflict: IntegrityError, force_run: bool
+) -> tuple[Document, Pipeline | None, bool, bool]:
+    result = await session.execute(
+        select(Document).where(Document.sha256 == sha256).with_for_update()
+    )
     document = result.scalar_one_or_none()
     if document is None:
         raise conflict
-    return document, await _create_upload_pipeline(session, document), True
+    pipeline, created = await _existing_upload_pipeline(session, document, force_run)
+    return document, pipeline, True, created
 
 
-async def _create_upload_pipeline(session: AsyncSession, document: Document) -> Pipeline:
-    document.status = PipelineStatus.IN_PROGRESS
+async def _existing_upload_pipeline(
+    session: AsyncSession, document: Document, force_run: bool
+) -> tuple[Pipeline | None, bool]:
+    active = await _active_pipeline(session, document)
+    if active and not force_run:
+        return active, False
+    if active and force_run:
+        active.status = PipelineStatus.CANCELLED
     pipeline = _new_upload_pipeline(document.id)
+    document.status = PipelineStatus.IN_PROGRESS
     session.add(pipeline)
     await session.commit()
-    return pipeline
+    return pipeline, True
+
+
+async def _active_pipeline(session: AsyncSession, document: Document) -> Pipeline | None:
+    result = await session.execute(
+        select(Pipeline).where(
+            Pipeline.document_id == document.id,
+            Pipeline.status == PipelineStatus.IN_PROGRESS,
+        )
+    )
+    return result.scalar_one_or_none()
 
 
 def _new_upload_pipeline(document_id: UUID) -> Pipeline:
