@@ -110,7 +110,9 @@ async def search_chunks(query_embedding: list[float], query: str = "") -> list[R
         .join(Document, Document.id == Node.document_id)
         .where(
             embedding_column.is_not(None),
-            Node.node_type.in_(("article", "article_part", "section", "preamble", "header")),
+            Node.node_type.in_(
+                ("article", "article_section", "article_part", "section", "preamble", "header")
+            ),
         )
         .order_by(distance)
         # Several nearby chunk vectors can belong to the same article part.
@@ -152,7 +154,7 @@ async def search_chunks(query_embedding: list[float], query: str = "") -> list[R
             .where(
                 Node.text.is_not(None),
                 Node.node_type.in_(
-                    ("article", "article_part", "section", "preamble", "header")
+                    ("article", "article_section", "article_part", "section", "preamble", "header")
                 ),
             )
             .order_by(bm25_score)
@@ -191,7 +193,7 @@ async def search_chunks(query_embedding: list[float], query: str = "") -> list[R
                 )
                 .join(Document, Document.id == Node.document_id)
                 .where(
-                    Node.node_type.in_(("article", "article_part")),
+                    Node.node_type.in_(("article", "article_section", "article_part")),
                     or_(
                         Node.title.ilike(f"%Статья {number}%"),
                         cast(Node.breadcrumbs, Text).ilike(f"%Статья {number}%"),
@@ -252,7 +254,7 @@ async def search_chunks(query_embedding: list[float], query: str = "") -> list[R
                 seed_result = await session.execute(
                     select(Node.id, Node.document_id, Node.path, Node.node_type).where(
                         Node.id.in_(seed_ids),
-                        Node.node_type.in_(("article", "article_part")),
+                        Node.node_type.in_(("article", "article_section", "article_part")),
                     )
                 )
                 seed_nodes = {
@@ -268,7 +270,7 @@ async def search_chunks(query_embedding: list[float], query: str = "") -> list[R
                     document_id, seed_path, node_type = seed
                     article_path = (
                         seed_path.rsplit(".", maxsplit=1)[0]
-                        if node_type == "article_part"
+                        if node_type in ("article_section", "article_part")
                         else seed_path
                     )
                     article_context = await retrieve_article_context(

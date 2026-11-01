@@ -45,6 +45,7 @@ services:
     volumes:
       - ../app:/app/app
       - ../alembic:/app/alembic
+      - ../alembic.ini:/app/alembic.ini
       - ../media:/app/media
     environment:
       DATABASE_URL: ${DATABASE_URL}
@@ -56,12 +57,12 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
-  worker:
+  worker-upload:
     build:
       context: ..
       dockerfile: docker/Dockerfile
     image: rag_vu-api
-    container_name: rag_vu-worker
+    container_name: rag_vu-worker-upload
     env_file: ../.env
     environment:
       DATABASE_URL: ${DATABASE_URL}
@@ -83,7 +84,8 @@ services:
         "app.services.background_jobs.celery_app:celery_app",
         "worker",
         "--loglevel=INFO",
-        "--concurrency=1",
+        "--concurrency=2",
+        "--queues=upload",
       ]
     depends_on:
       postgres:
@@ -91,6 +93,75 @@ services:
       redis:
         condition: service_healthy
     restart: unless-stopped
+
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+
+  worker-parsing:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    image: rag_vu-api
+    container_name: rag_vu-worker-parsing
+    env_file: ../.env
+    environment:
+      DATABASE_URL: ${DATABASE_URL}
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/1
+      OLLAMA_BASE_URL: ${OLLAMA_DOCKER_BASE_URL:-http://host.docker.internal:11434}
+      HF_HOME: /hf-cache
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ../app:/app/app
+      - ../media:/app/media
+      - rag_vu-hf-cache:/hf-cache
+      - ../media/rapidocr-models:/usr/local/lib/python3.12/site-packages/rapidocr/models
+    command: ["celery", "-A", "app.services.background_jobs.celery_app:celery_app", "worker", "--loglevel=INFO", "--concurrency=2", "--queues=parsing"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+
+  worker-chunking:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    image: rag_vu-api
+    container_name: rag_vu-worker-chunking
+    env_file: ../.env
+    environment:
+      DATABASE_URL: ${DATABASE_URL}
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/1
+      OLLAMA_BASE_URL: ${OLLAMA_DOCKER_BASE_URL:-http://host.docker.internal:11434}
+      HF_HOME: /hf-cache
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ../app:/app/app
+      - ../media:/app/media
+      - rag_vu-hf-cache:/hf-cache
+      - ../media/rapidocr-models:/usr/local/lib/python3.12/site-packages/rapidocr/models
+    command: ["celery", "-A", "app.services.background_jobs.celery_app:celery_app", "worker", "--loglevel=INFO", "--concurrency=2", "--queues=chunking"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
 
   query:
     build:

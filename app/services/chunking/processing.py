@@ -37,7 +37,12 @@ def _select_chunk_nodes(document_nodes: list[Node]) -> list[Node]:
     legal_nodes = [
         node
         for node in document_nodes
-        if node.node_type in (NodeTypes.ARTICLE.value, NodeTypes.ARTICLE_PART.value)
+        if node.node_type
+        in (
+            NodeTypes.ARTICLE.value,
+            NodeTypes.ARTICLE_SECTION.value,
+            NodeTypes.ARTICLE_PART.value,
+        )
     ]
     return legal_nodes or document_nodes
 
@@ -56,7 +61,14 @@ async def _create_chunks(nodes: list[Node], docling_json_path: str | None):
     if docling_json_path and os.path.isfile(docling_json_path):
         document = await asyncio.to_thread(load_docling_document, docling_json_path)
         chunker = await asyncio.to_thread(create_docling_chunker)
-        return await asyncio.to_thread(make_docling_chunks, document, chunker, _heading_map(nodes))
+        docling_chunks = await asyncio.to_thread(
+            make_docling_chunks,
+            document,
+            chunker,
+            _heading_map(nodes),
+        )
+        image_nodes = [node for node in nodes if node.node_type == "image"]
+        return [*docling_chunks, *make_chunks(image_nodes)]
     return make_chunks(nodes)
 
 

@@ -4,6 +4,7 @@ from jinja2 import Environment, PackageLoader, select_autoescape
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.db.db_enums.node_types import NodeTypes
 from app.models.db.document import Document
 from app.models.db.node import Node
 
@@ -11,7 +12,14 @@ _templates = Environment(
     loader=PackageLoader("app.services.api", "templates"),
     autoescape=select_autoescape(("html", "xml")),
 )
-_RENDERABLE_NODE_TYPES = ("article", "article_part", "section", "preamble", "header")
+_RENDERABLE_NODE_TYPES = (
+    NodeTypes.ARTICLE.value,
+    NodeTypes.ARTICLE_SECTION.value,
+    NodeTypes.ARTICLE_PART.value,
+    NodeTypes.SECTION.value,
+    NodeTypes.PREAMBLE.value,
+    NodeTypes.HEADER.value,
+)
 
 
 async def get_node_html(session: AsyncSession, node_id: UUID) -> str | None:

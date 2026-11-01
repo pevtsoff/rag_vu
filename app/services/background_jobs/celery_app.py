@@ -15,4 +15,11 @@ celery_app.conf.update(
     task_acks_late=True,
     task_reject_on_worker_lost=True,
     worker_prefetch_multiplier=1,
+    task_default_queue="upload",
+    task_routes={
+        "ingestion.start_parsing": {"queue": "upload"},
+        "ingestion.parse_document": {"queue": "parsing"},
+        "ingestion.chunk_document": {"queue": "chunking"},
+    },
+    task_queues={"upload": {}, "parsing": {}, "chunking": {}},
 )

@@ -56,18 +56,24 @@ async def load_nodes(session: AsyncSession, document_id: str | None) -> list[Nod
     nodes = [
         node
         for node in all_nodes
-        if node.node_type in (NodeTypes.ARTICLE.value, NodeTypes.ARTICLE_PART.value)
+        if node.node_type
+        in (
+            NodeTypes.ARTICLE.value,
+            NodeTypes.ARTICLE_SECTION.value,
+            NodeTypes.ARTICLE_PART.value,
+        )
     ]
     if not nodes:
         return [node for node in all_nodes if (node.text or "").strip()]
     paths_with_parts = {
         str(node.path).rsplit(".", maxsplit=1)[0]
         for node in nodes
-        if node.node_type == NodeTypes.ARTICLE_PART.value and node.path
+        if node.node_type in (NodeTypes.ARTICLE_SECTION.value, NodeTypes.ARTICLE_PART.value)
+        and node.path
     }
     return [
         node
         for node in nodes
-        if node.node_type == NodeTypes.ARTICLE_PART.value
+        if node.node_type in (NodeTypes.ARTICLE_SECTION.value, NodeTypes.ARTICLE_PART.value)
         or (node.node_type == NodeTypes.ARTICLE.value and str(node.path) not in paths_with_parts)
     ]

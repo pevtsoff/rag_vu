@@ -1,6 +1,7 @@
 import asyncio
 import traceback
 from datetime import UTC, datetime
+from pathlib import Path
 from uuid import UUID
 
 from docling_core.types.doc import ImageRefMode
@@ -13,7 +14,7 @@ from app.models.db.pipeline import Pipeline, PipelineStages, PipelineStatus
 from app.services.background_jobs.celery_app import celery_app
 from app.services.background_jobs.exceptions import FileChunkingError, FileParsingError
 from app.services.chunking import process_document_chunks
-from app.services.parser.parser import build_nodes_from_docling, parse_document
+from app.services.parser.parser import build_nodes_from_docling, extract_image_nodes, parse_document
 
 
 def _error_details(stage_error: Exception) -> str:
@@ -86,7 +87,16 @@ async def _parse_document(document_id: str, pipeline_id: str) -> None:
             )
 
             await session.execute(delete(Node).where(Node.document_id == document.id))
-            parsed_nodes = build_nodes_from_docling(docling_document, title or document.file_name)
+            document_title = title or document.file_name
+            parsed_nodes = build_nodes_from_docling(docling_document, document_title)
+            parsed_nodes.extend(
+                await asyncio.to_thread(
+                    extract_image_nodes,
+                    docling_document,
+                    Path(document.file_path).parent,
+                    document_title,
+                )
+            )
 
             session.add_all(
                 Node(
@@ -108,6 +118,7 @@ async def _parse_document(document_id: str, pipeline_id: str) -> None:
             pipeline.last_parsed = pipeline.parsed_at
             document.status = PipelineStatus.IN_PROGRESS
             await session.commit()
+            chunk_document_task.apply_async(args=(document_id, pipeline_id), queue="chunking")
 
         except Exception:
             await session.rollback()
@@ -123,6 +134,12 @@ def chunk_document_task(document_id: str, pipeline_id: str) -> str:
         error = exc if isinstance(exc, FileChunkingError) else FileChunkingError(str(exc))
         _run_async(_mark_failure(document_id, pipeline_id, "chunking", error))
         raise error from exc
+
+
+@celery_app.task(name="ingestion.start_parsing")
+def start_parsing_task(document_id: str, pipeline_id: str) -> str:
+    parse_document_task.apply_async(args=(document_id, pipeline_id), queue="parsing")
+    return document_id
 
 
 async def _chunk_document(document_id: str, pipeline_id: str) -> None:
