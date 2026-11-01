@@ -186,7 +186,7 @@ class TestDoclingParser(unittest.TestCase):
         self.assertEqual(nodes[1].breadcrumbs, ["Law", "Page 2", "Раздел I", "Статья 1"])
         self.assertEqual(nodes[1].path, "p000002.h1_razdel_i.h1_statya_1")
 
-    def test_plain_text_legal_heading_builds_article_parent(self):
+    def test_plain_text_legal_heading_is_not_promoted_to_section(self):
         def item(label, text, parent=None):
             return SimpleNamespace(
                 label=label,
@@ -206,10 +206,9 @@ class TestDoclingParser(unittest.TestCase):
 
         nodes = build_nodes_from_docling(document, "Law")
 
-        self.assertEqual([node.node_type for node in nodes], ["article"])
-        self.assertEqual(nodes[0].title, "Статья 1. Воинская обязанность")
-        self.assertIn("Воинская обязанность граждан", nodes[0].text)
-        self.assertEqual(nodes[0].breadcrumbs, ["Law", "Page 2", article.text])
+        self.assertEqual([node.node_type for node in nodes], ["preamble"])
+        self.assertNotIn("article", [node.node_type for node in nodes])
+        self.assertIn(article.text, nodes[0].text)
 
     def test_rejects_missing_input(self):
         with self.assertRaisesRegex(FileNotFoundError, "does not exist"):

@@ -15,13 +15,6 @@ from docling.document_converter import DocumentConverter, PdfFormatOption
 
 from app.models.services.parsed_node import ParsedNode
 
-_ARTICLE_HEADING = re.compile(r"^(?:статья|article)\s+\d+(?:\.\d+)?\b", re.IGNORECASE)
-_SECTION_HEADING = re.compile(r"^(?:раздел|section)\s+(?:[IVXLCDM]+|\d+)\b", re.IGNORECASE)
-_ARTICLE_PART_HEADING = re.compile(
-    r"^(?:пункт|параграф|paragraph|part|§)\s*\d+(?:\.\d+)*\b", re.IGNORECASE
-)
-
-
 def _docling_label(item: Any) -> str:
     label = getattr(item, "label", "")
     return str(getattr(label, "value", label)).lower()
@@ -90,11 +83,19 @@ def build_nodes_from_docling(docling_document: Any, document_title: str) -> list
     """Build searchable nodes from Docling's native parent-child hierarchy."""
     nodes: list[ParsedNode] = []
     sections: dict[str, dict[str, Any]] = {}
+    heading_stack: list[dict[str, Any]] = []
     sibling_counts: dict[str, int] = {}
     preambles: dict[int | None, list[str]] = {}
     for item, _ in docling_document.iterate_items(with_groups=False):
         _append_docling_item(
-            item, docling_document, document_title, nodes, sections, sibling_counts, preambles
+            item,
+            docling_document,
+            document_title,
+            nodes,
+            sections,
+            heading_stack,
+            sibling_counts,
+            preambles,
         )
     _prepend_preambles(nodes, preambles, document_title)
     if not nodes:
@@ -113,22 +114,29 @@ def build_nodes_from_docling(docling_document: Any, document_title: str) -> list
 def _append_docling_item(
     item: Any, document: Any, title: str, nodes: list[ParsedNode],
     sections: dict[str, dict[str, Any]],
+    heading_stack: list[dict[str, Any]],
     sibling_counts: dict[str, int], preambles: dict[int | None, list[str]],
 ) -> None:
     text = str(getattr(item, "text", "") or "").strip()
     page = _page_number(item)
     ancestors = _section_ancestors(item, document, sections)
-    if text and (_docling_label(item) == "section_header" or _is_legal_heading(text)):
-        if _ARTICLE_PART_HEADING.match(text) and _article_ancestor(ancestors):
-            _append_article_part(item, text, ancestors, nodes)
-        else:
-            _append_section_header(
-                item, text, title, page, nodes, ancestors, sections, sibling_counts
-            )
-    elif _is_article_part(item, ancestors):
-        _append_article_part(item, text, ancestors, nodes)
+    if text and _docling_label(item) == "section_header":
+        ancestors = _heading_ancestors(item, ancestors, heading_stack)
+        _append_section_header(
+            item,
+            text,
+            title,
+            page,
+            nodes,
+            ancestors,
+            sections,
+            heading_stack,
+            sibling_counts,
+        )
     elif text and ancestors:
         ancestors[-1]["node"].text += "\n\n" + text
+    elif text and heading_stack:
+        heading_stack[-1]["section"]["node"].text += "\n\n" + text
     elif text:
         preambles.setdefault(page, []).append(text)
 
@@ -136,6 +144,7 @@ def _append_docling_item(
 def _append_section_header(
     item: Any, text: str, title: str, page: int | None, nodes: list[ParsedNode],
     ancestors: list[dict[str, Any]], sections: dict[str, dict[str, Any]],
+    heading_stack: list[dict[str, Any]],
     sibling_counts: dict[str, int],
 ) -> None:
     item_ref = _item_ref(item)
@@ -143,7 +152,7 @@ def _append_section_header(
     parent_key = ancestors[-1]["key"] if ancestors else page_label
     ordinal = sibling_counts.get(parent_key, 0) + 1
     sibling_counts[parent_key] = ordinal
-    node_type = _section_node_type(text)
+    node_type = "section"
     node = _make_section_node(text, title, page, ancestors, ordinal, page_label, node_type)
     nodes.append(node)
     sections[item_ref] = {
@@ -154,20 +163,24 @@ def _append_section_header(
         "path": node.path,
         "node_type": node_type,
         "breadcrumbs": node.breadcrumbs,
-        "parts": 0,
     }
+    heading_stack.append({"level": _heading_level(item), "section": sections[item_ref]})
 
 
-def _section_node_type(text: str) -> str:
-    if _ARTICLE_HEADING.match(text):
-        return "article"
-    if _SECTION_HEADING.match(text):
-        return "section"
-    return "section"
+def _heading_ancestors(
+    item: Any, explicit_ancestors: list[dict[str, Any]], heading_stack: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    level = _heading_level(item)
+    while heading_stack and heading_stack[-1]["level"] >= level:
+        heading_stack.pop()
+    if explicit_ancestors:
+        return explicit_ancestors
+    return [entry["section"] for entry in heading_stack]
 
 
-def _is_legal_heading(text: str) -> bool:
-    return bool(_ARTICLE_HEADING.match(text) or _SECTION_HEADING.match(text))
+def _heading_level(item: Any) -> int:
+    level = getattr(item, "level", 1)
+    return level if isinstance(level, int) and level > 0 else 1
 
 
 def _item_ref(item: Any) -> str:
@@ -186,47 +199,6 @@ def _section_ancestors(
             ancestors.append(section)
         parent = getattr(parent_item, "parent", None)
     return list(reversed(ancestors))
-
-
-def _is_article_part(item: Any, ancestors: list[dict[str, Any]]) -> bool:
-    return bool(
-        _article_ancestor(ancestors)
-        and (
-            _docling_label(item) == "paragraph"
-            or (
-                _docling_label(item) == "list_item"
-                and getattr(item, "enumerated", False)
-            )
-        )
-    )
-
-
-def _article_ancestor(ancestors: list[dict[str, Any]]) -> dict[str, Any] | None:
-    return next(
-        (ancestor for ancestor in reversed(ancestors) if ancestor["node_type"] == "article"),
-        None,
-    )
-
-
-def _append_article_part(
-    item: Any, text: str, ancestors: list[dict[str, Any]], nodes: list[ParsedNode],
-) -> None:
-    article = _article_ancestor(ancestors)
-    if article is None:
-        return
-    article["parts"] += 1
-    heading = _ARTICLE_PART_HEADING.match(text)
-    marker = str(getattr(item, "marker", "") or (heading.group(0) if heading else ""))
-    part_title = heading.group(0) if heading else f"Part {marker or article['parts']}"
-    nodes.append(
-        ParsedNode(
-            part_title,
-            text,
-            [*article["breadcrumbs"], part_title],
-            f"{article['path']}.p{article['parts']}",
-            "article_part",
-        )
-    )
 
 
 def _prepend_preambles(

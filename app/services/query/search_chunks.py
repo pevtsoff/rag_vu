@@ -193,7 +193,9 @@ async def search_chunks(query_embedding: list[float], query: str = "") -> list[R
                 )
                 .join(Document, Document.id == Node.document_id)
                 .where(
-                    Node.node_type.in_(("article", "article_section", "article_part")),
+                    Node.node_type.in_(
+                        ("article", "article_section", "article_part", "section")
+                    ),
                     or_(
                         Node.title.ilike(f"%Статья {number}%"),
                         cast(Node.breadcrumbs, Text).ilike(f"%Статья {number}%"),

@@ -9,7 +9,6 @@ import httpx
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.db_enums.node_types import NodeTypes
 from app.models.db.node import Node
 from app.services.chunking.builders import make_chunks, make_docling_chunks
 from app.services.chunking.docling import create_docling_chunker, load_docling_document
@@ -34,17 +33,7 @@ async def _load_document_nodes(session: AsyncSession, document_id: str) -> list[
 
 
 def _select_chunk_nodes(document_nodes: list[Node]) -> list[Node]:
-    legal_nodes = [
-        node
-        for node in document_nodes
-        if node.node_type
-        in (
-            NodeTypes.ARTICLE.value,
-            NodeTypes.ARTICLE_SECTION.value,
-            NodeTypes.ARTICLE_PART.value,
-        )
-    ]
-    return legal_nodes or document_nodes
+    return [node for node in document_nodes if (node.text or "").strip()]
 
 
 def _heading_map(nodes: list[Node]) -> dict[tuple[str, ...], UUID]:
