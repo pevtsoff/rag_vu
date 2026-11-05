@@ -57,6 +57,28 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
+  mcp:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    image: rag_vu-api
+    container_name: rag_vu-mcp
+    env_file: ../.env
+    environment:
+      MCP_TRANSPORT: http
+      MCP_HOST: 0.0.0.0
+      MCP_PORT: 8001
+      RAG_VU_API_BASE_URL: http://api:8000
+    ports:
+      - "${PORT_PREFIX}001:8001"
+    volumes:
+      - ../app:/app/app
+    command: ["python", "-m", "app.mcp.mcp_app"]
+    depends_on:
+      api:
+        condition: service_started
+    restart: unless-stopped
+
   worker-upload:
     build:
       context: ..

@@ -25,6 +25,8 @@ dependencies = [
     "docling>=2.126.0",
     "celery[redis]>=5.4.0",
     "fastmcp>=2.9.2",
+    "pydantic-ai>=0.4.3",
+    "langgraph>=1.2.20",
 ]
 
 [tool.pytest.ini_options]

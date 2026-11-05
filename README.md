@@ -55,6 +55,22 @@ The complete interactive schema is available at `/docs` (Swagger UI), `/redoc` (
 - `GET /api/v2/documents/{doc_id}` — retrieve document metadata and processing status.
 - `POST /api/v2/documents/search` — accepts the same search request shape as v1. The current handler is a stub and returns an empty list.
 
+## MCP server
+
+The MCP server exposes document upload, pipeline rerun, and document lookup tools. Start the API and workers first, then run the MCP server from the repository root:
+
+```bash
+uv run python -m app.mcp.mcp_app
+```
+
+By default it serves Streamable HTTP at `http://127.0.0.1:8001/mcp`. The server calls the RAG-VU HTTP API at `RAG_VU_API_BASE_URL` (default `http://localhost:8080`). Set `MCP_HOST` and `MCP_PORT` to change the bind address and port.
+
+The Docker Compose stack includes an `mcp` service at `http://localhost:${PORT_PREFIX}001/mcp` (for example, `http://localhost:8001/mcp` when `PORT_PREFIX=8`). It calls the API through the internal `api:8000` address.
+
+ChatGPT connects to remote MCP endpoints, so it cannot connect to this loopback URL directly. To use it from ChatGPT, expose it through a Secure MCP Tunnel, or host it at a public HTTPS endpoint, then add that HTTPS MCP endpoint in ChatGPT under **Plugins → Add custom MCP server** (or the Apps setup shown for your account). ChatGPT's available MCP features and setup permissions depend on the plan and workspace. See [OpenAI's connection instructions](https://help.openai.com/en/articles/12584461-connecting-custom-mcp-servers-in-chatgpt).
+
+For clients that launch local MCP processes over stdio, set `MCP_TRANSPORT=stdio` and configure the command as `uv run --directory /path/to/rag_vu python -m app.mcp.mcp_app`. `upload_a_file` accepts a path readable by the MCP server process, plus an optional `force_run` flag. `rerun_pipeline` accepts a document UUID, a stage (`uploading`, `parsing`, or `chunking`), and an optional `force_run` flag. `get_document` accepts a document UUID.
+
 The Makefile includes these useful commands:
 
 ```bash
