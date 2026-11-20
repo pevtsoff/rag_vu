@@ -1,0 +1,21 @@
+# Tracing/Evaluation Refactoring
+## Arize Phoenix for the RAG pipeline
+1. Add arize_phoenix for the
+upload, parsing, chunking,embedding and query steps
+2. I want we trace everything we need for each step, and at minimum it shall include:
+2.1. for upload
+filename, filesize, path, time it ran
+2.2. for parsing:
+filename, filesize, path, number of document nodes extracted
+2.3. for chunking:
+filename, filesize, path, number of chunks created
+2.4. for embedding:
+filename, filesize, path, number of embeddings created
+2.5. for query:
+we should trace here:
+2.5.1. the original query
+2.5.2. the context retrieved by vector search ( log qty= QuerySettings.top_k sources)
+2.5.3. the context retrieved by bm25 search ( log qty= QuerySettings.top_k sources)
+2.5.4. rerunking step (log results before and after the re-runking)
+2.5.4. the LLM final query and context, qty of tokens received
+3. Add whatever YOU think is good to trace as well

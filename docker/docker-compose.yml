@@ -1,3 +1,40 @@
+x-app-image: &app-image
+  build:
+    context: ..
+    dockerfile: docker/Dockerfile
+  image: rag_vu-api
+  env_file: ../.env
+  extra_hosts:
+    - "host.docker.internal:host-gateway"
+  restart: unless-stopped
+
+# Redis is only the Celery job transport. Events live in PostgreSQL (outbox/inbox tables);
+# a job message carries nothing but an inbox row id.
+x-worker: &worker
+  <<: *app-image
+  environment:
+    DATABASE_URL: ${DATABASE_URL}
+    CELERY_BROKER_URL: redis://redis:6379/0
+    OLLAMA_BASE_URL: ${OLLAMA_DOCKER_BASE_URL:-http://host.docker.internal:11434}
+    HF_HOME: /hf-cache
+    TRACING_ENABLED: ${TRACING_ENABLED:-true}
+    PHOENIX_COLLECTOR_ENDPOINT: ${PHOENIX_COLLECTOR_ENDPOINT:-http://phoenix:6006/v1/traces}
+    PHOENIX_PROJECT_NAME: ${PHOENIX_PROJECT_NAME:-rag_vu}
+  volumes:
+    - ../app:/app/app
+    - ../media:/app/media
+    - rag_vu-hf-cache:/hf-cache
+    - ../media/rapidocr-models:/usr/local/lib/python3.12/site-packages/rapidocr/models
+  depends_on:
+    postgres:
+      condition: service_healthy
+    redis:
+      condition: service_healthy
+  deploy:
+    resources:
+      limits:
+        cpus: "2.0"
+
 services:
   redis:
     image: redis:7-alpine
@@ -34,12 +71,8 @@ services:
       - shared_preload_libraries=pg_textsearch
 
   api:
-    build:
-      context: ..
-      dockerfile: docker/Dockerfile
-    image: rag_vu-api
+    <<: *app-image
     container_name: rag_vu-api
-    env_file: ../.env
     ports:
       - "${PORT_PREFIX}080:8000"
     volumes:
@@ -50,151 +83,110 @@ services:
     environment:
       DATABASE_URL: ${DATABASE_URL}
       DATABASE_URL_SYNC: ${DATABASE_URL_SYNC}
+      OLLAMA_BASE_URL: ${OLLAMA_DOCKER_BASE_URL:-http://host.docker.internal:11434}
+      TRACING_ENABLED: ${TRACING_ENABLED:-true}
+      PHOENIX_COLLECTOR_ENDPOINT: ${PHOENIX_COLLECTOR_ENDPOINT:-http://phoenix:6006/v1/traces}
+      PHOENIX_PROJECT_NAME: ${PHOENIX_PROJECT_NAME:-rag_vu}
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  event-processor:
+    <<: *app-image
+    container_name: rag_vu-event-processor
+    environment:
+      DATABASE_URL: ${DATABASE_URL}
+      CELERY_BROKER_URL: redis://redis:6379/0
+    volumes:
+      - ../app:/app/app
+    command: ["python", "-m", "app.adapters.inbound.event_processor"]
     depends_on:
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
-    restart: unless-stopped
 
   worker-upload:
-    build:
-      context: ..
-      dockerfile: docker/Dockerfile
-    image: rag_vu-api
+    <<: *worker
     container_name: rag_vu-worker-upload
-    env_file: ../.env
-    environment:
-      DATABASE_URL: ${DATABASE_URL}
-      CELERY_BROKER_URL: redis://redis:6379/0
-      CELERY_RESULT_BACKEND: redis://redis:6379/1
-      OLLAMA_BASE_URL: ${OLLAMA_DOCKER_BASE_URL:-http://host.docker.internal:11434}
-      HF_HOME: /hf-cache
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
-    volumes:
-      - ../app:/app/app
-      - ../media:/app/media
-      - rag_vu-hf-cache:/hf-cache
-      - ../media/rapidocr-models:/usr/local/lib/python3.12/site-packages/rapidocr/models
-    command:
-      [
-        "celery",
-        "-A",
-        "app.services.background_jobs.celery_app:celery_app",
-        "worker",
-        "--loglevel=INFO",
-        "--concurrency=2",
-        "--queues=upload",
-      ]
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-    restart: unless-stopped
-
-    deploy:
-      resources:
-        limits:
-          cpus: "2.0"
+    command: ["celery", "-A", "app.adapters.inbound.celery_jobs.celery_app:celery_app", "worker", "--loglevel=INFO", "--concurrency=2", "--queues=upload"]
 
   worker-parsing:
-    build:
-      context: ..
-      dockerfile: docker/Dockerfile
-    image: rag_vu-api
+    <<: *worker
     container_name: rag_vu-worker-parsing
-    env_file: ../.env
-    environment:
-      DATABASE_URL: ${DATABASE_URL}
-      CELERY_BROKER_URL: redis://redis:6379/0
-      CELERY_RESULT_BACKEND: redis://redis:6379/1
-      OLLAMA_BASE_URL: ${OLLAMA_DOCKER_BASE_URL:-http://host.docker.internal:11434}
-      HF_HOME: /hf-cache
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
-    volumes:
-      - ../app:/app/app
-      - ../media:/app/media
-      - rag_vu-hf-cache:/hf-cache
-      - ../media/rapidocr-models:/usr/local/lib/python3.12/site-packages/rapidocr/models
-    command: ["celery", "-A", "app.services.background_jobs.celery_app:celery_app", "worker", "--loglevel=INFO", "--concurrency=2", "--queues=parsing"]
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-    restart: unless-stopped
-    deploy:
-      resources:
-        limits:
-          cpus: "2.0"
+    command: ["celery", "-A", "app.adapters.inbound.celery_jobs.celery_app:celery_app", "worker", "--loglevel=INFO", "--concurrency=2", "--queues=parsing"]
 
   worker-chunking:
-    build:
-      context: ..
-      dockerfile: docker/Dockerfile
-    image: rag_vu-api
+    <<: *worker
     container_name: rag_vu-worker-chunking
-    env_file: ../.env
-    environment:
-      DATABASE_URL: ${DATABASE_URL}
-      CELERY_BROKER_URL: redis://redis:6379/0
-      CELERY_RESULT_BACKEND: redis://redis:6379/1
-      OLLAMA_BASE_URL: ${OLLAMA_DOCKER_BASE_URL:-http://host.docker.internal:11434}
-      HF_HOME: /hf-cache
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
-    volumes:
-      - ../app:/app/app
-      - ../media:/app/media
-      - rag_vu-hf-cache:/hf-cache
-      - ../media/rapidocr-models:/usr/local/lib/python3.12/site-packages/rapidocr/models
-    command: ["celery", "-A", "app.services.background_jobs.celery_app:celery_app", "worker", "--loglevel=INFO", "--concurrency=2", "--queues=chunking"]
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-    restart: unless-stopped
-    deploy:
-      resources:
-        limits:
-          cpus: "2.0"
+    command: ["celery", "-A", "app.adapters.inbound.celery_jobs.celery_app:celery_app", "worker", "--loglevel=INFO", "--concurrency=2", "--queues=chunking"]
+
+  worker-embedding:
+    <<: *worker
+    container_name: rag_vu-worker-embedding
+    command: ["celery", "-A", "app.adapters.inbound.celery_jobs.celery_app:celery_app", "worker", "--loglevel=INFO", "--concurrency=2", "--queues=embedding"]
 
   query:
-    build:
-      context: ..
-      dockerfile: docker/Dockerfile
-    image: rag_vu-api
+    <<: *app-image
     container_name: rag_vu-query
-    env_file: ../.env
     environment:
       RAG_VU_API_BASE_URL: ${RAG_VU_API_BASE_URL:-http://localhost:${PORT_PREFIX}080}
       OLLAMA_BASE_URL: ${OLLAMA_DOCKER_BASE_URL:-http://host.docker.internal:11434}
       PYTHONPATH: /app
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
+      TRACING_ENABLED: ${TRACING_ENABLED:-true}
+      PHOENIX_COLLECTOR_ENDPOINT: ${PHOENIX_COLLECTOR_ENDPOINT:-http://phoenix:6006/v1/traces}
+      PHOENIX_PROJECT_NAME: ${PHOENIX_PROJECT_NAME:-rag_vu}
     ports:
       - "${PORT_PREFIX}000:8000"
     volumes:
       - ../app:/app/app
-    command:
-      - chainlit
-      - run
-      - app/services/query/chat.py
-      - --host
-      - 0.0.0.0
-      - --port
-      - "8000"
+    command: ["chainlit", "run", "app/adapters/inbound/chat_ui/chat.py", "--host", "0.0.0.0", "--port", "8000"]
     depends_on:
       postgres:
         condition: service_healthy
       api:
         condition: service_started
+
+  # Arize Phoenix: trace UI at http://localhost:${PORT_PREFIX}006, OTLP/HTTP at /v1/traces.
+  # Traces are stored in SQLite under the volume; delete the volume to start clean.
+  #
+  # Phoenix >= v22 enables auth by default for any Docker image bound to all interfaces
+  # (PHOENIX_HOST=::), which otherwise makes span export from the api/worker containers
+  # fail with 401 Unauthorized. This is a local, single-host dev stack with no external
+  # exposure, so auth is explicitly disabled rather than provisioning and distributing an
+  # API key — this keeps `docker compose up` fully self-configuring.
+  phoenix:
+    image: arizephoenix/phoenix:latest
+    container_name: rag_vu-phoenix
+    ports:
+      - "${PORT_PREFIX}006:6006"
+    environment:
+      PHOENIX_WORKING_DIR: /mnt/data
+      PHOENIX_ENABLE_AUTH: "false"
+    volumes:
+      - rag_vu-phoenix-data:/mnt/data
     restart: unless-stopped
+
+  # make test-unit / make test-integration
+  tests:
+    <<: *app-image
+    profiles: ["test"]
+    restart: "no"
+    environment:
+      TEST_DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/rag_vu_test
+      TRACING_ENABLED: "false"
+    volumes:
+      - ../app:/app/app
+      - ../alembic:/app/alembic
+      - ../alembic.ini:/app/alembic.ini
+      - ../tests:/app/tests
+      - ../pyproject.toml:/app/pyproject.toml
+    command: ["pytest", "tests"]
+    depends_on:
+      postgres:
+        condition: service_healthy
 
 volumes:
   rag_vu-pgdata:
   rag_vu-hf-cache:
+  rag_vu-phoenix-data:

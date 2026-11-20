@@ -1,27 +1,27 @@
+"""Alembic environment: the URL comes from settings, the metadata from the ORM models."""
+
 import os
-import sys
 from logging.config import fileConfig
 
 from sqlalchemy import engine_from_config, pool
 
 from alembic import context
-
-sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
-
-import app.models  # noqa: F401
-from app.db.model_base import Base
+from app.adapters.outbound.persistence.models import Base
+from app.config.app_settings import get_settings
 
 config = context.config
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
+config.set_main_option(
+    "sqlalchemy.url", os.getenv("ALEMBIC_DATABASE_URL") or get_settings().database_url_sync
+)
 target_metadata = Base.metadata
 
 
 def run_migrations_offline() -> None:
-    url = config.get_main_option("sqlalchemy.url")
     context.configure(
-        url=url,
+        url=config.get_main_option("sqlalchemy.url"),
         target_metadata=target_metadata,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
