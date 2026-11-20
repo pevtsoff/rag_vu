@@ -1,46 +1,56 @@
-"""Provide lightweight optional dependency stubs for test collection."""
+"""Stub optional heavy dependencies (Docling, Transformers) when they are not installed.
+
+Adapters import them at module scope; unit tests replace the parts they exercise.
+"""
 
 import importlib.util
 import sys
 import types
 
 
-def _module(name: str, package: bool = False) -> types.ModuleType:
+def _module(name: str, **attributes: object) -> types.ModuleType:
     module = types.ModuleType(name)
-    if package:
-        module.__path__ = []
+    module.__path__ = []
+    module.__dict__.update(attributes)
     sys.modules[name] = module
     return module
 
 
+class _Stub:
+    def __init__(self, *args: object, **kwargs: object) -> None:
+        self.__dict__.update(kwargs)
+
+    @classmethod
+    def load_from_json(cls, path: str) -> "_Stub":
+        return cls(path=path)
+
+
 def _stub_docling() -> None:
-    docling = _module("docling", package=True)
-    _module("docling.chunking").HybridChunker = object
-    _module("docling.datamodel", package=True)
-    _module("docling.datamodel.base_models").InputFormat = types.SimpleNamespace(PDF="pdf")
-    options = _module("docling.datamodel.pipeline_options")
-    options.PdfPipelineOptions = type("PdfPipelineOptions", (), {})
-    options.TesseractCliOcrOptions = type(
-        "TesseractCliOcrOptions",
-        (),
-        {"__init__": lambda self, **kwargs: self.__dict__.update(kwargs)},
+    _module("docling")
+    _module("docling.chunking", HybridChunker=_Stub)
+    _module("docling.datamodel")
+    _module("docling.datamodel.base_models", InputFormat=types.SimpleNamespace(PDF="pdf"))
+    _module(
+        "docling.datamodel.pipeline_options",
+        HeadingHierarchyOptions=_Stub,
+        PdfPipelineOptions=_Stub,
+        TesseractCliOcrOptions=_Stub,
     )
-    converter = _module("docling.document_converter")
-    converter.DocumentConverter = object
-    converter.PdfFormatOption = lambda **kwargs: types.SimpleNamespace(**kwargs)
-    core = _module("docling_core", package=True)
-    _module("docling_core.transforms", package=True)
-    _module("docling_core.transforms.chunker", package=True)
-    _module("docling_core.transforms.chunker.tokenizer", package=True)
-    _module("docling_core.transforms.chunker.tokenizer.huggingface").HuggingFaceTokenizer = object
-    _module("docling_core.types", package=True)
-    doc_types = _module("docling_core.types.doc")
-    doc_types.DoclingDocument = None
-    doc_types.ImageRefMode = types.SimpleNamespace(PLACEHOLDER="placeholder")
-    _module("transformers").AutoTokenizer = None
-    docling.__path__ = []
-    core.__path__ = []
+    _module("docling.document_converter", DocumentConverter=_Stub, PdfFormatOption=_Stub)
+    _module("docling_core")
+    _module("docling_core.transforms")
+    _module("docling_core.transforms.chunker")
+    _module("docling_core.transforms.chunker.tokenizer")
+    _module("docling_core.transforms.chunker.tokenizer.huggingface", HuggingFaceTokenizer=_Stub)
+    _module("docling_core.types")
+    _module(
+        "docling_core.types.doc",
+        DoclingDocument=_Stub,
+        ImageRefMode=types.SimpleNamespace(PLACEHOLDER="placeholder"),
+    )
 
 
 if importlib.util.find_spec("docling") is None:
     _stub_docling()
+if importlib.util.find_spec("transformers") is None:
+    _module("transformers", AutoTokenizer=_Stub)

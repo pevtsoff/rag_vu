@@ -2,72 +2,79 @@
 
 RAG-VU is a document ingestion and retrieval-augmented question answering (RAG) application. It accepts files supported by [Docling](https://docling-project.github.io/docling/), converts them into structured text, splits that text into searchable chunks, and stores vector embeddings in PostgreSQL with pgvector. Users can search the indexed material and ask questions through a chat interface that retrieves relevant passages and cites their source context.
 
-The project is document-type agnostic: it is no longer limited to legal text or law-specific chunking. Laws remain supported, including a dedicated parser for Russian laws published on pravo.gov.ru. For ordinary uploads, the pipeline uses Docling's document structure and hybrid chunking; when legal article nodes are present, chunking prioritizes article and article-part text.
+The project is document-type agnostic. Laws remain supported, including a dedicated importer for Russian laws published on pravo.gov.ru; when legal article nodes are present, chunking uses article parts instead of repeating the whole article.
 
 ## What it includes
 
-- A FastAPI API for uploading documents, tracking ingestion pipelines, and viewing source nodes.
-- Asynchronous ingestion with Celery and Redis: upload, parse with Docling, create chunks, and generate embeddings.
-- PostgreSQL storage for documents, structured nodes, chunks, and vector embeddings.
-- A Chainlit chat interface with vector and BM25 retrieval, reranking, and source-grounded answers.
+- A FastAPI API for uploading documents, tracking pipelines, searching, and viewing source nodes.
+- An **event-driven ingestion pipeline** with four stages — **upload → parsing → chunking → embedding** — each a Celery job on its own queue, connected by events stored in PostgreSQL (transactional outbox + idempotent inbox).
+- PostgreSQL storage for documents, structured nodes, chunks, vectors, and the event tables.
+- A Chainlit chat interface with vector + BM25 + exact-article retrieval, reranking, and source-grounded answers.
 - Configurable embedding, chat, and reranking providers: Ollama and OpenRouter.
+
+## Architecture
+
+The code follows Hexagonal (Ports and Adapters) architecture. See [docs/architecture/refactoring_plan.md](docs/architecture/refactoring_plan.md) for the full design.
+
+```
+app/
+├── domain/        entities (Document, Pipeline, Node, Chunk), stages, domain events
+├── application/   ports (interfaces) and use cases; depends only on the domain
+├── adapters/
+│   ├── inbound/   http (FastAPI), celery_jobs, event_processor, chat_ui (Chainlit), cli
+│   └── outbound/  persistence (SQLAlchemy), storage, parsing (Docling), law_sources,
+│                  chunking, embeddings, llm, rerank, retrieval, rendering, messaging
+├── bootstrap/     composition root (wires adapters into use cases)
+└── config/        settings
+```
+
+### Event flow
+
+```
+POST /upload ─► FileReceivedEvent ─► [upload]    move file to storage, verify size/sha256
+             ─► FileUploadedEvent ─► [parsing]   Docling → nodes, structure JSON, image OCR
+             ─► DocumentParsedEvent ─► [chunking] hybrid chunker or text splitter
+             ─► DocumentChunkedEvent ─► [embedding] vectors in batches → pipeline SUCCEEDED
+             ─► DocumentEmbeddedEvent
+```
+
+Every event has `event_id`, `event_type`, `producer`, `occurred_at` and a JSON payload (always with `document_id` and `pipeline_id`).
+
+- **Outbox** (`outbox_events`): a use case writes its state change and the next event in one transaction. Nothing is sent to a broker from request handlers or jobs.
+- **Event processor** (`event-processor` service): polls the outbox in batches with `FOR UPDATE SKIP LOCKED`, inserts one `inbox_events` row per (event, consumer) with `ON CONFLICT DO NOTHING`, then dispatches a Celery job — carrying only the inbox id — to the consumer's queue. It also redelivers jobs that were lost or abandoned.
+- **Inbox** (`inbox_events`): a job first *claims* its row (with a lock token), does the work, and marks the row `PROCESSED` in the same transaction that stores the result and the next event. A duplicate or redelivered job finds the row already processed and does nothing.
+
+Redis is only the Celery transport; events are never stored or emitted through it.
 
 ## Run with Docker Compose
 
-Prerequisites: Docker with the Compose plugin. A local Python 3.12 environment is needed only for running maintenance scripts outside Docker.
+Prerequisites: Docker with the Compose plugin.
 
-1. Configure `.env` in the repository root. The checked-in file has local development defaults. Set database credentials and any model provider settings you need; keep API keys private.
-2. Build and start the services:
+1. Configure `.env` in the repository root (see `.env.example`). Keep API keys private.
+2. Build and start the services with `make build` (later: `make up`).
+3. Apply database migrations: `make migrate-up`.
+4. Open the API health check at [http://localhost:8080/health](http://localhost:8080/health), the API docs at [http://localhost:8080/docs](http://localhost:8080/docs), and the chat UI at [http://localhost:8000](http://localhost:8000).
 
-   ```bash
-   make build
-   ```
+Services: `postgres`, `redis`, `api`, `event-processor`, `worker-upload`, `worker-parsing`, `worker-chunking`, `worker-embedding`, `query` (Chainlit).
 
-   For subsequent starts without rebuilding, use `make up`.
-3. Apply database migrations:
+The default `PORT_PREFIX=8` exposes the API on port `8080` and chat on `8000`; other prefixes give `${PORT_PREFIX}080` and `${PORT_PREFIX}000`. Set `RAG_VU_API_BASE_URL` if the API is hosted elsewhere.
 
-   ```bash
-   make migrate-up
-   ```
-
-4. Open the API health check at [http://localhost:8080/health](http://localhost:8080/health), the interactive API docs at [http://localhost:8080/docs](http://localhost:8080/docs), and the chat UI at [http://localhost:8000](http://localhost:8000).
-
-The default `PORT_PREFIX=8` exposes the API on port `8080` and chat on port `8000`. If you change the prefix, the ports are `${PORT_PREFIX}080` and `${PORT_PREFIX}000`. The chat service defaults to `http://localhost:8080` for the API; set `RAG_VU_API_BASE_URL` if it is hosted elsewhere.
+Event processing settings (all optional): `EVENT_BATCH_SIZE` (100), `EVENT_POLL_INTERVAL_SECONDS` (1), `INBOX_LOCK_TIMEOUT_SECONDS` (3600, must exceed the slowest stage), `INBOX_REDELIVERY_AFTER_SECONDS` (300), `EMBEDDING_BATCH_SIZE` (32).
 
 ## API endpoints
 
-The complete interactive schema is available at `/docs` (Swagger UI), `/redoc` (ReDoc), and `/openapi.json` (OpenAPI JSON), using the API host and port shown above. The application routes currently registered are:
+The interactive schema is at `/docs`, `/redoc` and `/openapi.json`.
 
-### Health
+- `GET /health` — `{"status":"healthy"}`.
+- `POST /api/v1/documents/upload` — multipart `file`. An identical upload returns its active pipeline (`duplicate: true`); `force_run=true` cancels it and starts a new one.
+- `GET /api/v1/documents/{doc_id}` — document metadata and status.
+- `GET /api/v1/documents/{doc_id}/pipelines` — pipeline history, newest first.
+- `GET /api/v1/documents/{doc_id}/rerun/{stage}?force_run=true` — restart from `uploading`, `parsing`, `chunking` or `embedding` (cancels any active run). Without `force_run=true` it returns the active pipeline, or `409` if none is running.
+- `POST /api/v1/documents/search` — `{"query": "...", "top_k": 5}` (`top_k` 1–100); hybrid search returning `id`, `content`, `score`, `node_ids`.
+- `GET /api/v1/nodes/{node_id}/html` — rendered source node; `404` if missing or not renderable.
+- `GET /api/v2/documents/{doc_id}`, `POST /api/v2/documents/search` — same as v1.
 
-- `GET /health` — returns `{"status":"healthy"}` when the API is running.
-
-### Documents, API v1
-
-- `POST /api/v1/documents/upload` — upload a file as multipart form data using the required `file` field. An identical upload returns its active pipeline; pass `force_run=true` to cancel the active pipeline and start a new one. A new document always gets its initial pipeline.
-- `GET /api/v1/documents/{doc_id}` — retrieve document metadata and processing status.
-- `GET /api/v1/documents/{doc_id}/rerun/{stage}?force_run=true` — force a pipeline rerun from a stage, cancelling any active run first. Without `force_run=true`, the endpoint returns the active pipeline or responds with `409` if none is running. The accepted `PipelineStages` values are `uploading`, `parsing`, and `chunking`. Parsing continues through chunking and embedding; chunking recreates embeddings from the existing parse.
-- `POST /api/v1/documents/search` — submit JSON `{"query": "...", "top_k": 5}` to search documents; `top_k` must be between 1 and 100. Returns a list of matches with IDs, content, and scores.
-- `GET /api/v1/nodes/{node_id}/html` — return the rendered HTML for a source node. `node_id` must be a UUID; returns 404 if the node is not found.
-
-### Documents, API v2
-
-- `GET /api/v2/documents/{doc_id}` — retrieve document metadata and processing status.
-- `POST /api/v2/documents/search` — accepts the same search request shape as v1. The current handler is a stub and returns an empty list.
-
-The Makefile includes these useful commands:
-
-```bash
-make ps              # list running containers
-make logs            # follow service logs
-make restart         # restart services
-make down            # stop and remove containers
-make migrate-history # show Alembic migration history
-make migrate-down    # roll back one migration
-make help            # list documented Makefile targets
-```
-
-`make migrate-create MSG="describe schema change"` creates a migration. `make down-v` removes the PostgreSQL data volume. `make flush` drops and recreates the database schema and migration files; both commands erase stored data.
+Useful Makefile targets: `make ps`, `make logs`, `make restart`, `make down`, `make migrate-history`, `make migrate-down`, `make help`. `make down-v` and `make flush` erase stored data.
 
 ## Configure models
 
@@ -102,16 +109,13 @@ Compose sets the query container's Ollama URL from `OLLAMA_DOCKER_BASE_URL`, whi
 
 ## Ingest documents
 
-Upload a Docling-supported file to `POST /api/v1/documents/upload`. The API stores the original file under `media/documents`, creates document and pipeline records, then dispatches processing to the Celery worker. Docling converts the file into a structured document; RAG-VU builds source nodes, chunks their text, generates embeddings, and persists the results. Redis is used as the Celery broker and is started by Compose. Pipeline status records progress and stage errors.
+Upload a Docling-supported file to `POST /api/v1/documents/upload`. The API streams it to `media/documents/.incoming`, records the document, its pipeline and a `FileReceivedEvent` in one transaction, and returns immediately. The four stage workers then move the file to `media/documents/<document_id>/`, parse it with Docling (Russian and English OCR for scanned PDFs; LibreOffice for RTF), create chunks, and embed them. Pipeline status shows the current stage and any stage error.
 
-The API provides stage reruns at:
+To restart from a stage, use the rerun endpoint or the CLI:
 
-- `GET /api/v1/documents/{document_id}/rerun/parsing` — parse again, then continue through chunking and embedding.
-- `GET /api/v1/documents/{document_id}/rerun/chunking` — recreate chunks and embeddings from the existing parse.
-
-For PDF files, the worker enables Russian and English OCR for scanned pages. The worker image includes LibreOffice for RTF conversion. Supported input formats depend on the installed Docling version and its configured backends.
-
-After application or schema updates, apply migrations with `make migrate-up`.
+```bash
+uv run python -m app.adapters.inbound.cli.rerun_document DOCUMENT_UUID --stage embedding
+```
 
 ## Query and Search in DB
 
@@ -151,29 +155,27 @@ This query uses the `pg_textsearch` BM25 index configured for `nodes.text`; lowe
 
 ## Law support
 
-Russian laws remain a supported source type. The dedicated parser can fetch a law from pravo.gov.ru and save its document record and legal hierarchy to PostgreSQL. Its built-in example can be run with:
+Russian laws can be imported from pravo.gov.ru-style pages. The importer stores the law's section/article/part hierarchy as nodes and emits `DocumentParsedEvent`, so chunking and embedding run through the same pipeline:
 
 ```bash
-uv run python -m app.services.parser.pravo_parser
+uv run python -m app.adapters.inbound.cli.import_law URL [URL ...] [--nodes-json out/]
 ```
 
-Law documents uploaded through the general API also go through the Docling ingestion pipeline. The chunker uses article and article-part nodes when the parser provides them, preserving legal hierarchy for retrieval.
+Law documents uploaded as files go through the Docling pipeline instead.
 
-## Manual processing
+## Tests
 
-The chunking script can be used for stored documents during maintenance or debugging. Configure the database and embedding provider first:
+```
+tests/unit/         no services needed (in-memory fakes for every port)
+tests/integration/  real PostgreSQL with pgvector, ltree and pg_textsearch
+```
 
 ```bash
-uv run python -m app.services.chunking.chunking
+make test-unit          # local: uv run --extra dev pytest tests/unit
+make test-integration   # in Docker against the Compose PostgreSQL (database rag_vu_test)
 ```
 
-To process one document by UUID:
-
-```bash
-uv run python -m app.services.chunking.chunking --document-id DOCUMENT_UUID
-```
-
-OpenRouter embeddings require `OPENROUTER_API_KEY`. Ollama embeddings require a reachable Ollama service and configured embedding model.
+Integration tests need `TEST_DATABASE_URL` (an asyncpg URL); the database is created and migrated automatically, and the tests are skipped when the variable is unset.
 
 ## Example database data
 
