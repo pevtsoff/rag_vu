@@ -30,7 +30,9 @@ async def on_chat_start() -> None:
 async def on_message(message: cl.Message) -> None:
     history: list[dict[str, str]] = cl.user_session.get("history") or []
     try:
-        answer = await answer_question.execute(message.content, history)
+        answer = await answer_question.execute(
+            message.content, history, session_id=cl.context.session.id
+        )
     except Exception as exc:
         await cl.Message(content=f"Query failed: {exc}").send()
         return

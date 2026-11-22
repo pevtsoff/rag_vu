@@ -6,6 +6,10 @@ from sqlalchemy.exc import SQLAlchemyError
 from app.adapters.outbound.retrieval.bm25_unavailable_error import Bm25UnavailableError
 from app.adapters.outbound.retrieval.retrieval_limits import RetrievalLimits
 from app.adapters.outbound.retrieval.sqlalchemy_hybrid_retriever import SqlAlchemyHybridRetriever
+from app.application.tracing import trace_attributes as attr
+from app.application.tracing.document_role import DocumentRole
+from app.application.tracing.span_kind import SpanKind
+from tests.unit.fakes.recording_tracer import RecordingTracer
 
 
 class Result:
@@ -116,3 +120,33 @@ async def test_list_questions_add_the_whole_parent_article() -> None:
 async def test_missing_bm25_index_is_reported() -> None:
     with pytest.raises(Bm25UnavailableError, match="pg_textsearch extension"):
         await _retriever(ScriptedSession([[(False, False)]])).retrieve(VECTOR, "q")
+
+
+async def test_vector_and_bm25_candidates_are_traced_up_to_top_k() -> None:
+    vector_ids, bm25_ids = [uuid4() for _ in range(4)], [uuid4() for _ in range(3)]
+    session = ScriptedSession(
+        [
+            [(True, True)],
+            [(node, f"vector {i}", ["Law"], "Title", "Law") for i, node in enumerate(vector_ids)],
+            [(node, "Title", ["Law"], f"bm25 {i}", "Law") for i, node in enumerate(bm25_ids)],
+        ]
+    )
+    tracer = RecordingTracer()
+    retriever = SqlAlchemyHybridRetriever(
+        lambda: session, RetrievalLimits(30, 20, 60), tracer, traced_k=2
+    )
+    await retriever.retrieve(VECTOR, "general query")
+
+    assert [span.name for span in tracer.spans] == [
+        "retrieval.vector",
+        "retrieval.bm25",
+        "retrieval.article",
+    ]
+    vector, bm25 = tracer.one("retrieval.vector"), tracer.one("retrieval.bm25")
+    assert vector.kind is SpanKind.RETRIEVER and vector.input == "general query"
+    assert vector.attributes[attr.RETRIEVAL_CANDIDATE_COUNT] == 4
+    assert [d.id for d in vector.documents[DocumentRole.RETRIEVED]] == [
+        f"node:{node}" for node in vector_ids[:2]
+    ]
+    assert bm25.attributes[attr.RETRIEVAL_CANDIDATE_COUNT] == 3
+    assert [d.metadata["rank"] for d in bm25.documents[DocumentRole.RETRIEVED]] == [1, 2]

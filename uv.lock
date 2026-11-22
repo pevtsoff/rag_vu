@@ -262,6 +262,26 @@ wheels = [
 ]
 
 [[package]]
+name = "arize-phoenix-otel"
+version = "0.17.3"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "openinference-instrumentation" },
+    { name = "openinference-semantic-conventions" },
+    { name = "opentelemetry-exporter-otlp" },
+    { name = "opentelemetry-exporter-otlp-proto-http" },
+    { name = "opentelemetry-proto" },
+    { name = "opentelemetry-sdk" },
+    { name = "opentelemetry-semantic-conventions" },
+    { name = "typing-extensions" },
+    { name = "wrapt" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/c7/d0/c37deb762506ecb1884b2264f1c8a76df4167b73642bff933404073e9f05/arize_phoenix_otel-0.17.3.tar.gz", hash = "sha256:c3e05c0f2e85e0e3dd5d3183432072ec6fb62eea201c1935dec076a6517c09ff", size = 30080, upload-time = "2026-11-06T23:34:03.26Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/10/81/032b4df641acb3b38f14380a35b0da3e9ac85f8918df21a65dcbe8fd6a7e/arize_phoenix_otel-0.17.3-py3-none-any.whl", hash = "sha256:511ea6266dcf7549cc2215ab8f544015272048a691bf4cb75dd3eb9f75800c73", size = 22747, upload-time = "2026-11-06T23:34:01.955Z" },
+]
+
+[[package]]
 name = "asyncer"
 version = "0.0.8"
 source = { registry = "https://pypi.org/simple" }
@@ -2523,6 +2543,30 @@ wheels = [
 ]
 
 [[package]]
+name = "openinference-instrumentation"
+version = "0.1.83"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "openinference-semantic-conventions" },
+    { name = "opentelemetry-api" },
+    { name = "opentelemetry-sdk" },
+    { name = "wrapt" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/bf/67/40aebd484a5600049fce370ecf6995b6d24c9659ff6f5b89783e1b66d8ae/openinference_instrumentation-0.1.83.tar.gz", hash = "sha256:b7d63f0ae1aafd49cf03a69231a42d267d80d01d0cabbffcf6906990115d0367", size = 47863, upload-time = "2026-11-21T20:14:05.79Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/8c/8f/13c7a8077b213284dc5c6d4561ef40940446df387ee375fc0c79104246a7/openinference_instrumentation-0.1.83-py3-none-any.whl", hash = "sha256:d596516d8067bccf63f38a46647487b78c600f64aab95ad7c9259c79cd724733", size = 55387, upload-time = "2026-11-21T20:14:04.511Z" },
+]
+
+[[package]]
+name = "openinference-semantic-conventions"
+version = "0.1.47"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/4e/82/86fcb74fcb80b7f171f6c4eeeee2cca1424e30c94fcae15040efdac6b671/openinference_semantic_conventions-0.1.47.tar.gz", hash = "sha256:9278e6cbd93ef1d0faa80298ceedd59cd88133c1b8a1a5e2747dc7927eec295a", size = 16879, upload-time = "2026-11-21T20:14:06.985Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/df/15/7f5688184464eea7d11b0ab647019595f974bacb985d2e34b93a8183bc8a/openinference_semantic_conventions-0.1.47-py3-none-any.whl", hash = "sha256:ae3ab8af07f61dc17da1a396a56e63b5d931386778f767818ab6a57d004fbf46", size = 13744, upload-time = "2026-11-21T20:14:05.934Z" },
+]
+
+[[package]]
 name = "openpyxl"
 version = "3.1.5"
 source = { registry = "https://pypi.org/simple" }
@@ -2561,6 +2605,19 @@ wheels = [
 [package.optional-dependencies]
 requests = [
     { name = "requests" },
+]
+
+[[package]]
+name = "opentelemetry-exporter-otlp"
+version = "1.45.2"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "opentelemetry-exporter-otlp-proto-grpc" },
+    { name = "opentelemetry-exporter-otlp-proto-http" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/1e/45/52e9ce585d825e14cc211871acc3bc46b6cd36cdb0c09255a7feea98322b/opentelemetry_exporter_otlp-1.45.2.tar.gz", hash = "sha256:879044ba65b8b1be7a0d9d904afb76700e96d2a4d36700918d9325c9ee3b8be4", size = 6093, upload-time = "2026-10-29T17:29:40.905Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/19/27/fcc3b725ddbfa274fbf6098c9583032557671d35aa8d5e08d7e7277fb126/opentelemetry_exporter_otlp-1.45.2-py3-none-any.whl", hash = "sha256:52c8b9f268289c92c08b3a97f48c63d6e5c037f25ca1f6f29ef162fb78974afc", size = 6732, upload-time = "2026-10-29T17:29:12.653Z" },
 ]
 
 [[package]]
@@ -2789,6 +2846,22 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/a8/69/eebabc7710a748fd8db8096cbc3337429698a2aba8675367e525f65e9009/opentelemetry_instrumentation_haystack-0.63.1.tar.gz", hash = "sha256:cb39357d5ebc2c36bcce72dc2cb655bf14869528ca95dbf34641b73596aae976", size = 85200, upload-time = "2026-11-16T19:12:17.508Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/2c/72/e996b86f56113fcfc1a346a7d354ff2991246d9fc5f80c39ab84ea758049/opentelemetry_instrumentation_haystack-0.63.1-py3-none-any.whl", hash = "sha256:640e5c45f4ea095492033cbf1ff9cab75caf928c742d9cf61b334a7cbc0121fe", size = 7510, upload-time = "2026-11-16T19:11:37.34Z" },
+]
+
+[[package]]
+name = "opentelemetry-instrumentation-httpx"
+version = "0.66b2"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "opentelemetry-api" },
+    { name = "opentelemetry-instrumentation" },
+    { name = "opentelemetry-semantic-conventions" },
+    { name = "opentelemetry-util-http" },
+    { name = "wrapt" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/41/43/3204ca7e7d91bd9e1b569a98a5f9252c98ae70ba3bb562d2770c34e21d49/opentelemetry_instrumentation_httpx-0.66b2.tar.gz", hash = "sha256:b4c81e4a6dc7b8d7cb2d3088eb8848f6db6bd4abdc443ac9586ec176f1460187", size = 26638, upload-time = "2026-10-29T17:38:31.46Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/53/40/37d6161dcd95285c9c3eb75e2dbeb1dbc6e868551532735374918a22e298/opentelemetry_instrumentation_httpx-0.66b2-py3-none-any.whl", hash = "sha256:93e2b6ab1a505d76ec3d98abcf7e8527d4712167d6c3b5ebbb9c68d9309d9ba5", size = 17723, upload-time = "2026-10-29T17:37:33.735Z" },
 ]
 
 [[package]]
@@ -4045,6 +4118,7 @@ version = "0.2.0"
 source = { virtual = "." }
 dependencies = [
     { name = "alembic" },
+    { name = "arize-phoenix-otel" },
     { name = "asyncpg" },
     { name = "bs4" },
     { name = "celery", extra = ["redis"] },
@@ -4054,6 +4128,10 @@ dependencies = [
     { name = "fastmcp" },
     { name = "httpx" },
     { name = "jinja2" },
+    { name = "openinference-semantic-conventions" },
+    { name = "opentelemetry-api" },
+    { name = "opentelemetry-instrumentation-httpx" },
+    { name = "opentelemetry-sdk" },
     { name = "pgvector" },
     { name = "psycopg2-binary" },
     { name = "pydantic" },
@@ -4078,6 +4156,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "alembic", specifier = "==1.15.2" },
+    { name = "arize-phoenix-otel", specifier = ">=0.17.3" },
     { name = "asyncpg", specifier = "==0.30.0" },
     { name = "bs4", specifier = ">=0.0.2" },
     { name = "celery", extras = ["redis"], specifier = ">=5.4.0" },
@@ -4087,6 +4166,10 @@ requires-dist = [
     { name = "fastmcp", specifier = ">=2.9.2" },
     { name = "httpx", specifier = ">=0.28.1" },
     { name = "jinja2", specifier = "==3.1.6" },
+    { name = "openinference-semantic-conventions", specifier = ">=0.1.47" },
+    { name = "opentelemetry-api", specifier = ">=1.45.0" },
+    { name = "opentelemetry-instrumentation-httpx", specifier = ">=0.66b0" },
+    { name = "opentelemetry-sdk", specifier = ">=1.45.0" },
     { name = "pgvector", specifier = "==0.4.0" },
     { name = "psycopg2-binary", specifier = "==2.9.10" },
     { name = "pydantic", specifier = "==2.11.1" },

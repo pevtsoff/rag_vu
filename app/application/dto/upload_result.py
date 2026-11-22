@@ -9,3 +9,5 @@ class UploadResult:
     document: Document
     pipeline: Pipeline
     duplicate: bool
+    # The in-progress run that a forced re-upload cancelled, if any.
+    replaced: Pipeline | None = None

@@ -55,7 +55,7 @@ Prerequisites: Docker with the Compose plugin.
 3. Apply database migrations: `make migrate-up`.
 4. Open the API health check at [http://localhost:8080/health](http://localhost:8080/health), the API docs at [http://localhost:8080/docs](http://localhost:8080/docs), and the chat UI at [http://localhost:8000](http://localhost:8000).
 
-Services: `postgres`, `redis`, `api`, `event-processor`, `worker-upload`, `worker-parsing`, `worker-chunking`, `worker-embedding`, `query` (Chainlit).
+Services: `postgres`, `redis`, `api`, `event-processor`, `worker-upload`, `worker-parsing`, `worker-chunking`, `worker-embedding`, `query` (Chainlit), `phoenix` (tracing UI).
 
 The default `PORT_PREFIX=8` exposes the API on port `8080` and chat on `8000`; other prefixes give `${PORT_PREFIX}080` and `${PORT_PREFIX}000`. Set `RAG_VU_API_BASE_URL` if the API is hosted elsewhere.
 
@@ -162,6 +162,36 @@ uv run python -m app.adapters.inbound.cli.import_law URL [URL ...] [--nodes-json
 ```
 
 Law documents uploaded as files go through the Docling pipeline instead.
+
+## Tracing with Arize Phoenix
+
+Every ingestion step and every question is traced with OpenTelemetry, using OpenInference attribute names so [Phoenix](https://arize.com/docs/phoenix) renders retrievers, rerankers and LLM calls natively. Open the UI at [http://localhost:8006](http://localhost:8006) (`${PORT_PREFIX}006`), project `rag_vu`.
+
+Settings: `TRACING_ENABLED` (Compose turns it on by default; off outside Docker), `PHOENIX_COLLECTOR_ENDPOINT` (`http://phoenix:6006/v1/traces`), `PHOENIX_PROJECT_NAME` (`rag_vu`). A Phoenix Cloud key can be passed as `PHOENIX_API_KEY`.
+
+**Finding a pipeline run.** Each stage job is its own trace, as is the upload request. Every one of them carries the pipeline id twice: in its name — `pipeline.parsing [<pipeline id>]`, `document.upload [<pipeline id>]` — and as `rag.pipeline.id`. When a run ends (succeeded, failed, or cancelled by a forced re-upload / rerun) one more trace is sent, `pipeline [<pipeline id>]`, covering the run from creation to its end, with its final status, completed stages, failing stage and error.
+
+To see a whole run, open the Sessions tab: all these traces share `session.id` = pipeline id. Or filter spans by `attributes["rag.pipeline.id"] == "<pipeline id>"`, or search the id in span names. Chat questions use the Chainlit session id, so a conversation is grouped too.
+
+| Span | Kind | What is recorded |
+| --- | --- | --- |
+| `pipeline [<id>]` | CHAIN | sent when a run ends: whole-run duration, pipeline and document ids, file details, final status, completed stages, failing stage and error |
+| `document.upload [<id>]` | CHAIN | file name, size, MIME type, SHA-256, staged path, duplicate / force-run, document and pipeline ids |
+| `pipeline.upload [<id>]` | CHAIN | file name, size, staged and stored path, verification, inbox id, attempts, outcome |
+| `pipeline.parsing [<id>]` | CHAIN | file name, size, path, title, node count, node counts per type, text length |
+| `pipeline.chunking [<id>]` | CHAIN | file name, size, path, source nodes, chunk count, min / avg / max chunk length |
+| `pipeline.embedding [<id>]` | CHAIN | file name, size, path, embeddings created, dimensions, batch size and count |
+| `embedding.passage` / `embedding.query` | EMBEDDING | model, text count and length (the query text itself for queries) |
+| `rag.query` | CHAIN | original question, rewritten retrieval query, history length, answer, sources, context size |
+| `retrieval.vector`, `retrieval.bm25`, `retrieval.article` | RETRIEVER | the first `TOP_K` candidates of each source with rank, plus total candidate count |
+| `retrieval.hybrid` | RETRIEVER | RRF-fused candidates with scores, as handed to the reranker |
+| `rerank` | RERANKER | model, top-k, documents before and after reranking, whether the order changed |
+| `llm.answer` | LLM | full prompt (system prompt with retrieved context, history, question), answer, model, prompt / completion / total tokens, finish reason |
+| `documents.search` | RETRIEVER | query, top-k and results of the `/documents/search` endpoints |
+
+Every span also carries `rag.started_at` and its own timing; failures are recorded with the exception and an error status. Outgoing HTTP calls to Ollama / OpenRouter appear as child spans with latency and status code.
+
+In code, use cases depend only on the `Tracer` port (`app/application/ports/tracer.py`); `app/application/tracing/` holds the decorators that trace the embedder, retriever, reranker and chat-model ports; the OpenTelemetry/Phoenix adapter is in `app/adapters/outbound/tracing/`. With tracing disabled a `NullTracer` is used.
 
 ## Tests
 

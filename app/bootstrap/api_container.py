@@ -21,11 +21,12 @@ class ApiContainer:
 
     @cached_property
     def upload_document(self) -> UploadDocument:
-        return UploadDocument(self._uow, LocalFileStorage(self.infrastructure.settings.upload_path))
+        storage = LocalFileStorage(self.infrastructure.settings.upload_path)
+        return UploadDocument(self._uow, storage, self.infrastructure.tracer)
 
     @cached_property
     def rerun_pipeline(self) -> RerunPipeline:
-        return RerunPipeline(self._uow)
+        return RerunPipeline(self._uow, tracer=self.infrastructure.tracer)
 
     @cached_property
     def get_document(self) -> GetDocument:
@@ -42,7 +43,9 @@ class ApiContainer:
     @cached_property
     def search_documents(self) -> SearchDocuments:
         query = QueryContainer(self.infrastructure)
-        return SearchDocuments(self.infrastructure.embedder, query.retriever)
+        return SearchDocuments(
+            self.infrastructure.embedder, query.retriever, self.infrastructure.tracer
+        )
 
     async def dispose(self) -> None:
         await self.infrastructure.dispose()

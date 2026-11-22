@@ -5,6 +5,8 @@ from typing import Any
 import httpx
 
 from app.adapters.outbound.http_client_factory import HttpClientFactory
+from app.application.dto.chat_completion import ChatCompletion
+from app.application.dto.token_usage import TokenUsage
 from app.application.ports.chat_model import ChatModel
 
 MAX_ANSWER_TOKENS = 1000
@@ -24,7 +26,7 @@ class OpenRouterChatModel(ChatModel):
         self._api_key = api_key
         self._model_chain = model_chain
 
-    async def complete(self, messages: list[dict[str, str]]) -> str:
+    async def complete(self, messages: list[dict[str, str]]) -> ChatCompletion:
         if not self._api_key:
             raise RuntimeError("Set OPENROUTER_API_KEY to use OpenRouter chat.")
         body = {
@@ -36,7 +38,14 @@ class OpenRouterChatModel(ChatModel):
         headers = {"Authorization": f"Bearer {self._api_key}"}
         async with self._client_factory() as client:
             response = await client.post(self._url, headers=headers, json=body)
-        return self._answer(_json(response))
+        payload = _json(response)
+        return ChatCompletion(
+            text=self._answer(payload),
+            # With a model chain, only the response says which model actually answered.
+            model=str(payload.get("model") or ",".join(self._model_chain)),
+            usage=_usage(payload.get("usage")),
+            finish_reason=payload["choices"][0].get("finish_reason"),
+        )
 
     def _answer(self, payload: Any) -> str:
         choices = payload.get("choices") if isinstance(payload, dict) else None
@@ -60,6 +69,16 @@ class OpenRouterChatModel(ChatModel):
             f"OpenRouter model chain {self._model_chain!r} returned an empty answer. "
             f"Finish reason: {finish_reason}"
         )
+
+
+def _usage(usage: Any) -> TokenUsage:
+    if not isinstance(usage, dict):
+        return TokenUsage()
+    return TokenUsage(
+        prompt=usage.get("prompt_tokens"),
+        completion=usage.get("completion_tokens"),
+        total=usage.get("total_tokens"),
+    )
 
 
 def _json(response: httpx.Response) -> Any:

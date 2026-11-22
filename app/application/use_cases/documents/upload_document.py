@@ -5,7 +5,23 @@ from app.application.dto.upload_result import UploadResult
 from app.application.errors import ConcurrencyConflictError
 from app.application.ports.byte_stream import ByteStream
 from app.application.ports.file_storage import FileStorage
+from app.application.ports.trace_span import TraceSpan
+from app.application.ports.tracer import Tracer
 from app.application.ports.unit_of_work import UnitOfWork, UnitOfWorkFactory
+from app.application.tracing.null_tracer import NullTracer
+from app.application.tracing.pipeline_run_recorder import PipelineRunRecorder
+from app.application.tracing.trace_attributes import (
+    DOCUMENT_ID,
+    FILE_MIME_TYPE,
+    FILE_NAME,
+    FILE_SHA256,
+    FILE_SIZE,
+    PIPELINE_ID,
+    STAGED_PATH,
+    UPLOAD_DUPLICATE,
+    UPLOAD_FORCE_RUN,
+    with_pipeline_id,
+)
 from app.application.use_cases.documents.producers import API_PRODUCER
 from app.domain.documents.document import Document
 from app.domain.documents.pipeline import Pipeline
@@ -20,14 +36,31 @@ class UploadDocument:
     The document, its pipeline and the event are committed in one transaction.
     """
 
-    def __init__(self, uow_factory: UnitOfWorkFactory, storage: FileStorage) -> None:
+    def __init__(
+        self, uow_factory: UnitOfWorkFactory, storage: FileStorage, tracer: Tracer | None = None
+    ) -> None:
         self._uow_factory = uow_factory
         self._storage = storage
+        self._tracer = tracer or NullTracer()
+        self._runs = PipelineRunRecorder(self._tracer)
 
     async def execute(
         self, stream: ByteStream, file_name: str, mime_type: str, force_run: bool = False
     ) -> UploadResult:
-        staged = await self._storage.stage(stream, file_name, mime_type)
+        with self._tracer.span("document.upload") as span:
+            span.set_input(file_name)
+            span.set_attributes(
+                {FILE_NAME: file_name, FILE_MIME_TYPE: mime_type, UPLOAD_FORCE_RUN: force_run}
+            )
+            staged = await self._storage.stage(stream, file_name, mime_type)
+            _trace_staged(span, staged)
+            result = await self._accept(staged, force_run)
+            _trace_result(span, result)
+        if result.replaced is not None:
+            self._runs.record(result.replaced, result.document)
+        return result
+
+    async def _accept(self, staged: StagedFile, force_run: bool) -> UploadResult:
         try:
             result = await self._register(staged, force_run)
         except ConcurrencyConflictError:
@@ -76,7 +109,29 @@ class UploadDocument:
         await uow.pipelines.add(pipeline)
         # The content is already stored; the upload stage only verifies it.
         await uow.outbox.add([_file_received(document, pipeline, document.file_path)])
-        return UploadResult(document=document, pipeline=pipeline, duplicate=True)
+        return UploadResult(document=document, pipeline=pipeline, duplicate=True, replaced=active)
+
+
+def _trace_staged(span: TraceSpan, staged: StagedFile) -> None:
+    span.set_attributes(
+        {FILE_SIZE: staged.size, STAGED_PATH: staged.path, FILE_SHA256: staged.sha256}
+    )
+
+
+def _trace_result(span: TraceSpan, result: UploadResult) -> None:
+    span.rename(with_pipeline_id("document.upload", result.pipeline.id))
+    # The pipeline id is the session that groups this upload with its stage traces.
+    span.set_session(str(result.pipeline.id))
+    span.set_attributes(
+        {
+            DOCUMENT_ID: str(result.document.id),
+            PIPELINE_ID: str(result.pipeline.id),
+            UPLOAD_DUPLICATE: result.duplicate,
+        }
+    )
+    span.set_output(
+        {"document_id": str(result.document.id), "pipeline_id": str(result.pipeline.id)}
+    )
 
 
 def _file_received(document: Document, pipeline: Pipeline, staged_path: str) -> EventEnvelope:

@@ -2,10 +2,12 @@
 
 from uuid import UUID
 
+from app.application.dto.chat_completion import ChatCompletion
 from app.application.dto.job_route import JobRoute
 from app.application.dto.parsed_document import ParsedDocument
 from app.application.dto.staged_file import StagedFile
 from app.application.dto.stored_file import StoredFile
+from app.application.dto.token_usage import TokenUsage
 from app.application.ports.byte_stream import ByteStream
 from app.application.ports.chat_model import ChatModel
 from app.application.ports.chunker import Chunker
@@ -118,10 +120,11 @@ class ReversingReranker(Reranker):
 
 
 class FakeChatModel(ChatModel):
-    def __init__(self, reply: str) -> None:
+    def __init__(self, reply: str, usage: TokenUsage | None = None) -> None:
         self.reply = reply
+        self.usage = usage or TokenUsage(prompt=100, completion=20, total=120)
         self.messages: list[list[dict[str, str]]] = []
 
-    async def complete(self, messages: list[dict[str, str]]) -> str:
+    async def complete(self, messages: list[dict[str, str]]) -> ChatCompletion:
         self.messages.append(messages)
-        return self.reply
+        return ChatCompletion(self.reply, "fake-chat", self.usage, "stop")

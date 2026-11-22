@@ -6,7 +6,15 @@ from app.application.dto.stored_file import StoredFile
 from app.application.errors import StorageError
 from app.application.ports.clock import Clock
 from app.application.ports.file_storage import FileStorage
+from app.application.ports.trace_span import TraceValue
 from app.application.ports.unit_of_work import UnitOfWork
+from app.application.tracing.trace_attributes import (
+    FILE_SHA256,
+    FILE_SIZE,
+    STAGED_PATH,
+    STORED_PATH,
+    UPLOAD_VERIFIED,
+)
 from app.application.use_cases.stages.stage_context import StageContext
 from app.application.use_cases.stages.stage_job import StageJob
 from app.domain.documents.document import Document
@@ -33,6 +41,20 @@ class UploadStageJob(StageJob):
         if stored.size != event.size or (event.sha256 and stored.sha256 != event.sha256):
             raise StorageError(f"Stored file {stored.path} does not match the uploaded content")
         return stored
+
+    def trace_attributes(self, context: StageContext, result: Any) -> dict[str, TraceValue]:
+        stored: StoredFile = result
+        event = context.event
+        staged_path = event.staged_path if isinstance(event, FileReceivedEvent) else None
+        attributes: dict[str, TraceValue] = {
+            STORED_PATH: stored.path,
+            FILE_SIZE: stored.size,
+            FILE_SHA256: stored.sha256,
+            UPLOAD_VERIFIED: True,
+        }
+        if staged_path:
+            attributes[STAGED_PATH] = staged_path
+        return attributes
 
     async def _store(
         self,

@@ -3,7 +3,10 @@
 from uuid import UUID
 
 from app.application.errors import DocumentNotFoundError, NoActivePipelineError
+from app.application.ports.tracer import Tracer
 from app.application.ports.unit_of_work import UnitOfWork, UnitOfWorkFactory
+from app.application.tracing.null_tracer import NullTracer
+from app.application.tracing.pipeline_run_recorder import PipelineRunRecorder
 from app.application.use_cases.documents.stage_trigger_factory import (
     StageTriggerFactory,
 )
@@ -17,10 +20,14 @@ class RerunPipeline:
     """Without ``force_run`` return the active pipeline; with it, replace that pipeline."""
 
     def __init__(
-        self, uow_factory: UnitOfWorkFactory, triggers: StageTriggerFactory | None = None
+        self,
+        uow_factory: UnitOfWorkFactory,
+        triggers: StageTriggerFactory | None = None,
+        tracer: Tracer | None = None,
     ) -> None:
         self._uow_factory = uow_factory
         self._triggers = triggers or StageTriggerFactory()
+        self._runs = PipelineRunRecorder(tracer or NullTracer())
 
     async def execute(
         self, document_id: UUID, stage: PipelineStage, force_run: bool = False
@@ -34,6 +41,8 @@ class RerunPipeline:
                 return _require_active(active)
             pipeline = await self._restart(uow, document, active, stage)
             await uow.commit()
+        if active is not None:
+            self._runs.record(active, document)
         return pipeline
 
     async def _restart(

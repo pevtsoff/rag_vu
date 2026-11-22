@@ -17,6 +17,9 @@ x-worker: &worker
     CELERY_BROKER_URL: redis://redis:6379/0
     OLLAMA_BASE_URL: ${OLLAMA_DOCKER_BASE_URL:-http://host.docker.internal:11434}
     HF_HOME: /hf-cache
+    TRACING_ENABLED: ${TRACING_ENABLED:-true}
+    PHOENIX_COLLECTOR_ENDPOINT: ${PHOENIX_COLLECTOR_ENDPOINT:-http://phoenix:6006/v1/traces}
+    PHOENIX_PROJECT_NAME: ${PHOENIX_PROJECT_NAME:-rag_vu}
   volumes:
     - ../app:/app/app
     - ../media:/app/media
@@ -81,6 +84,9 @@ services:
       DATABASE_URL: ${DATABASE_URL}
       DATABASE_URL_SYNC: ${DATABASE_URL_SYNC}
       OLLAMA_BASE_URL: ${OLLAMA_DOCKER_BASE_URL:-http://host.docker.internal:11434}
+      TRACING_ENABLED: ${TRACING_ENABLED:-true}
+      PHOENIX_COLLECTOR_ENDPOINT: ${PHOENIX_COLLECTOR_ENDPOINT:-http://phoenix:6006/v1/traces}
+      PHOENIX_PROJECT_NAME: ${PHOENIX_PROJECT_NAME:-rag_vu}
     depends_on:
       postgres:
         condition: service_healthy
@@ -127,6 +133,9 @@ services:
       RAG_VU_API_BASE_URL: ${RAG_VU_API_BASE_URL:-http://localhost:${PORT_PREFIX}080}
       OLLAMA_BASE_URL: ${OLLAMA_DOCKER_BASE_URL:-http://host.docker.internal:11434}
       PYTHONPATH: /app
+      TRACING_ENABLED: ${TRACING_ENABLED:-true}
+      PHOENIX_COLLECTOR_ENDPOINT: ${PHOENIX_COLLECTOR_ENDPOINT:-http://phoenix:6006/v1/traces}
+      PHOENIX_PROJECT_NAME: ${PHOENIX_PROJECT_NAME:-rag_vu}
     ports:
       - "${PORT_PREFIX}000:8000"
     volumes:
@@ -138,6 +147,26 @@ services:
       api:
         condition: service_started
 
+  # Arize Phoenix: trace UI at http://localhost:${PORT_PREFIX}006, OTLP/HTTP at /v1/traces.
+  # Traces are stored in SQLite under the volume; delete the volume to start clean.
+  #
+  # Phoenix >= v22 enables auth by default for any Docker image bound to all interfaces
+  # (PHOENIX_HOST=::), which otherwise makes span export from the api/worker containers
+  # fail with 401 Unauthorized. This is a local, single-host dev stack with no external
+  # exposure, so auth is explicitly disabled rather than provisioning and distributing an
+  # API key — this keeps `docker compose up` fully self-configuring.
+  phoenix:
+    image: arizephoenix/phoenix:latest
+    container_name: rag_vu-phoenix
+    ports:
+      - "${PORT_PREFIX}006:6006"
+    environment:
+      PHOENIX_WORKING_DIR: /mnt/data
+      PHOENIX_ENABLE_AUTH: "false"
+    volumes:
+      - rag_vu-phoenix-data:/mnt/data
+    restart: unless-stopped
+
   # make test-unit / make test-integration
   tests:
     <<: *app-image
@@ -145,6 +174,7 @@ services:
     restart: "no"
     environment:
       TEST_DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/rag_vu_test
+      TRACING_ENABLED: "false"
     volumes:
       - ../app:/app/app
       - ../alembic:/app/alembic
@@ -159,3 +189,4 @@ services:
 volumes:
   rag_vu-pgdata:
   rag_vu-hf-cache:
+  rag_vu-phoenix-data:

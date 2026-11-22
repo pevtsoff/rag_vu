@@ -37,6 +37,7 @@ class WorkerContainer:
                 self._stage_job(consumer),
                 self.infrastructure.clock,
                 timedelta(seconds=self._settings.inbox_lock_timeout_seconds),
+                self.infrastructure.tracer,
             )
         return self._runners[consumer]
 

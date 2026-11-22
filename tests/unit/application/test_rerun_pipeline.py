@@ -12,6 +12,7 @@ from app.domain.documents.pipeline_stage import PipelineStage
 from app.domain.documents.pipeline_status import PipelineStatus
 from tests.unit.fakes.in_memory_store import InMemoryStore
 from tests.unit.fakes.in_memory_unit_of_work import uow_factory
+from tests.unit.fakes.recording_tracer import RecordingTracer
 
 TRIGGERS = {
     PipelineStage.UPLOADING: "FileReceivedEvent",
@@ -95,3 +96,27 @@ async def test_forced_rerun_cancels_the_active_pipeline() -> None:
 async def test_missing_document_is_not_found() -> None:
     with pytest.raises(DocumentNotFoundError):
         await RerunPipeline(uow_factory(InMemoryStore())).execute(uuid4(), PipelineStage.PARSING)
+
+
+async def test_forced_rerun_sends_the_run_trace_of_the_cancelled_run() -> None:
+    store, document, active = _store(active=True)
+    tracer = RecordingTracer()
+
+    await RerunPipeline(uow_factory(store), tracer=tracer).execute(
+        document.id, PipelineStage.PARSING, force_run=True
+    )
+
+    run = tracer.one_run(active.id)
+    assert run.status == "CANCELLED"
+    assert run.attributes["rag.document.id"] == str(document.id)
+
+
+async def test_a_rerun_without_an_active_run_sends_no_run_trace() -> None:
+    store, document, _ = _store()
+    tracer = RecordingTracer()
+
+    await RerunPipeline(uow_factory(store), tracer=tracer).execute(
+        document.id, PipelineStage.PARSING, force_run=True
+    )
+
+    assert tracer.runs == []

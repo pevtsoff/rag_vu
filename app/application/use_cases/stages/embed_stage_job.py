@@ -1,12 +1,21 @@
 """Stage 4: embed every chunk of the document and finish the pipeline."""
 
+from math import ceil
 from typing import Any
 from uuid import UUID
 
 from app.application.errors import EmptyStageResultError
 from app.application.ports.clock import Clock
 from app.application.ports.embedder import Embedder
+from app.application.ports.trace_span import TraceValue
 from app.application.ports.unit_of_work import UnitOfWork
+from app.application.tracing.trace_attributes import (
+    CHUNK_COUNT,
+    EMBEDDING_BATCH_COUNT,
+    EMBEDDING_BATCH_SIZE,
+    EMBEDDING_COUNT,
+    EMBEDDING_DIMENSIONS,
+)
 from app.application.use_cases.stages.stage_context import StageContext
 from app.application.use_cases.stages.stage_job import StageJob
 from app.domain.documents.chunk import Chunk
@@ -45,6 +54,16 @@ class EmbedStageJob(StageJob):
             )
             vectors.update(zip((chunk.id for chunk in batch), embedded, strict=True))
         return vectors
+
+    def trace_attributes(self, context: StageContext, result: Any) -> dict[str, TraceValue]:
+        chunk_count = len(context.data or [])
+        return {
+            CHUNK_COUNT: chunk_count,
+            EMBEDDING_COUNT: len(result),
+            EMBEDDING_DIMENSIONS: self._embedder.dimensions,
+            EMBEDDING_BATCH_SIZE: self._batch_size,
+            EMBEDDING_BATCH_COUNT: ceil(chunk_count / self._batch_size),
+        }
 
     async def _store(
         self,

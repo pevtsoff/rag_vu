@@ -16,9 +16,8 @@ from app.domain.documents.pipeline_stage import PipelineStage
 async def main(document_id: UUID, stage: PipelineStage) -> None:
     infrastructure = Infrastructure(get_settings())
     try:
-        pipeline = await RerunPipeline(infrastructure.unit_of_work).execute(
-            document_id, stage, force_run=True
-        )
+        use_case = RerunPipeline(infrastructure.unit_of_work, tracer=infrastructure.tracer)
+        pipeline = await use_case.execute(document_id, stage, force_run=True)
     finally:
         await infrastructure.dispose()
     print(f"Pipeline {pipeline.id} started at {stage} for document {document_id}")

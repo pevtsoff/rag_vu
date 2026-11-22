@@ -5,7 +5,15 @@ from typing import Any
 from app.application.errors import EmptyStageResultError
 from app.application.ports.chunker import Chunker
 from app.application.ports.clock import Clock
+from app.application.ports.trace_span import TraceValue
 from app.application.ports.unit_of_work import UnitOfWork
+from app.application.tracing.trace_attributes import (
+    CHUNK_AVG_CHARS,
+    CHUNK_COUNT,
+    CHUNK_MAX_CHARS,
+    CHUNK_MIN_CHARS,
+    CHUNK_SOURCE_NODES,
+)
 from app.application.use_cases.stages.stage_context import StageContext
 from app.application.use_cases.stages.stage_job import StageJob
 from app.domain.documents.chunk_draft import ChunkDraft
@@ -41,6 +49,16 @@ class ChunkStageJob(StageJob):
                 f"No text chunks could be created for document {context.document.id}"
             )
         return chunks
+
+    def trace_attributes(self, context: StageContext, result: Any) -> dict[str, TraceValue]:
+        lengths = [len(chunk.text) for chunk in result] or [0]
+        return {
+            CHUNK_SOURCE_NODES: len(context.data or []),
+            CHUNK_COUNT: len(result),
+            CHUNK_AVG_CHARS: round(sum(lengths) / len(lengths), 1),
+            CHUNK_MIN_CHARS: min(lengths),
+            CHUNK_MAX_CHARS: max(lengths),
+        }
 
     async def _store(
         self,

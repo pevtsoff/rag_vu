@@ -2,6 +2,9 @@
 
 from datetime import timedelta
 
+from app.application.ports.tracer import Tracer
+from app.application.tracing.null_tracer import NullTracer
+from app.application.tracing.traced_embedder import TracedEmbedder
 from app.application.use_cases.documents.upload_document import UploadDocument
 from app.application.use_cases.events.default_event_routes import default_event_routes
 from app.application.use_cases.events.delivery_dispatcher import DeliveryDispatcher
@@ -25,7 +28,8 @@ from tests.unit.fakes.in_memory_unit_of_work import uow_factory
 
 
 class PipelineHarness:
-    def __init__(self, parser: FakeParser | None = None) -> None:
+    def __init__(self, parser: FakeParser | None = None, tracer: Tracer | None = None) -> None:
+        tracer = tracer or NullTracer()
         self.store = InMemoryStore()
         self.uow = uow_factory(self.store)
         self.clock = FakeClock()
@@ -35,7 +39,7 @@ class PipelineHarness:
         self.embedder = FakeEmbedder()
         self.dispatcher = RecordingDispatcher()
         self.routes = default_event_routes()
-        self.upload = UploadDocument(self.uow, self.storage)
+        self.upload = UploadDocument(self.uow, self.storage, tracer)
         self.relay = RelayOutboxBatch(
             self.uow, self.routes, DeliveryDispatcher(self.dispatcher, self.routes), self.clock, 100
         )
@@ -43,11 +47,13 @@ class PipelineHarness:
             UploadStageJob(self.clock, self.storage),
             ParseStageJob(self.clock, self.parser),
             ChunkStageJob(self.clock, self.chunker),
-            EmbedStageJob(self.clock, self.embedder, batch_size=2),
+            EmbedStageJob(
+                self.clock, TracedEmbedder(self.embedder, tracer, "fake-embed"), batch_size=2
+            ),
         ]
         self.runners = {
             job.consumer: InboxJobRunner(
-                self.uow, default_event_registry(), job, self.clock, timedelta(minutes=5)
+                self.uow, default_event_registry(), job, self.clock, timedelta(minutes=5), tracer
             )
             for job in jobs
         }

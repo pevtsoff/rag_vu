@@ -7,6 +7,7 @@ from app.domain.events.file_received_event import FileReceivedEvent
 from tests.unit.fakes.fake_ports import BytesStream, FakeStorage
 from tests.unit.fakes.in_memory_store import InMemoryStore
 from tests.unit.fakes.in_memory_unit_of_work import uow_factory
+from tests.unit.fakes.recording_tracer import RecordingTracer
 
 
 def _use_case(store: InMemoryStore, storage: FakeStorage) -> UploadDocument:
@@ -84,3 +85,17 @@ async def test_forced_duplicate_cancels_the_active_pipeline() -> None:
     assert store.pipelines[active.id].status is PipelineStatus.CANCELLED
     assert result.pipeline.id != active.id and result.pipeline.is_active
     assert len(store.outbox) == 1
+
+
+async def test_forced_duplicate_sends_the_run_trace_of_the_cancelled_run() -> None:
+    store = InMemoryStore()
+    _, active = _existing(store, active=True)
+    tracer = RecordingTracer()
+
+    await UploadDocument(uow_factory(store), FakeStorage(), tracer).execute(
+        BytesStream(b"data"), "copy.pdf", "application/pdf", force_run=True
+    )
+
+    run = tracer.one_run(active.id)
+    assert run.status == "CANCELLED" and run.error is None
+    assert len(tracer.runs) == 1

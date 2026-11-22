@@ -14,14 +14,24 @@ from app.adapters.outbound.retrieval.sqlalchemy_hybrid_retriever import SqlAlche
 from app.application.ports.chat_model import ChatModel
 from app.application.ports.reranker import Reranker
 from app.application.ports.retriever import Retriever
+from app.application.ports.tracer import Tracer
+from app.application.tracing.traced_chat_model import TracedChatModel
+from app.application.tracing.traced_reranker import TracedReranker
+from app.application.tracing.traced_retriever import TracedRetriever
 from app.application.use_cases.query.answer_question import AnswerQuestion
 from app.bootstrap.infrastructure import Infrastructure
+
+PASSTHROUGH_RERANK_MODEL = "passthrough"
 
 
 class QueryContainer:
     def __init__(self, infrastructure: Infrastructure) -> None:
         self.infrastructure = infrastructure
         self._settings = infrastructure.settings
+
+    @property
+    def _tracer(self) -> Tracer:
+        return self.infrastructure.tracer
 
     @cached_property
     def retriever(self) -> Retriever:
@@ -30,30 +40,39 @@ class QueryContainer:
             self._settings.rerank_candidate_k,
             self._settings.rrf_k,
         )
-        return SqlAlchemyHybridRetriever(self.infrastructure.session_factory, limits)
+        hybrid = SqlAlchemyHybridRetriever(
+            self.infrastructure.session_factory, limits, self._tracer, self._settings.top_k
+        )
+        return TracedRetriever(hybrid, self._tracer)
 
     @cached_property
     def reranker(self) -> Reranker:
+        reranker, model_name = self._provider_reranker()
+        return TracedReranker(reranker, self._tracer, model_name, self._settings.top_k)
+
+    def _provider_reranker(self) -> tuple[Reranker, str]:
         settings = self._settings
         provider = settings.rerank_provider.strip().lower()
         clients = self.infrastructure.http_client_factory
         if provider == "ollama":
-            inner = OllamaReranker(
-                clients, settings.ollama_base_url, settings.ollama_rerank_model, settings.top_k
-            )
+            model = settings.ollama_rerank_model
+            inner = OllamaReranker(clients, settings.ollama_base_url, model, settings.top_k)
         elif provider != "openrouter":
             raise ValueError("RERANK_PROVIDER must be 'ollama' or 'openrouter'.")
         elif not settings.openrouter_api_key:
-            return PassthroughReranker(settings.top_k)
+            return PassthroughReranker(settings.top_k), PASSTHROUGH_RERANK_MODEL
         else:
             model = require_free_model(settings.openrouter_rerank_model, "OPENROUTER_RERANK_MODEL")
             inner = OpenRouterReranker(
                 clients, settings.openrouter_url, settings.openrouter_api_key, model, settings.top_k
             )
-        return FallbackReranker(inner, settings.top_k)
+        return FallbackReranker(inner, settings.top_k), model
 
     @cached_property
     def chat_model(self) -> ChatModel:
+        return TracedChatModel(self._provider_chat_model(), self._tracer)
+
+    def _provider_chat_model(self) -> ChatModel:
         settings = self._settings
         provider = settings.query_llm_provider.strip().lower()
         clients = self.infrastructure.http_client_factory
@@ -82,4 +101,5 @@ class QueryContainer:
             self.chat_model,
             self._settings.rag_vu_api_base_url,
             self._settings.max_history_turns,
+            self._tracer,
         )

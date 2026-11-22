@@ -60,12 +60,24 @@ class AppSettings(BaseSettings):
     max_history_turns: int = 8
     rag_vu_api_base_url: str = "http://localhost:8080"
 
+    # Arize Phoenix tracing; off unless enabled, so tests and CLI tools export nothing.
+    tracing_enabled: bool = False
+    phoenix_collector_endpoint: str = "http://phoenix:6006/v1/traces"
+    phoenix_project_name: str = "rag_vu"
+
     @property
     def normalized_embedding_provider(self) -> str:
         provider = self.embedding_provider.strip().lower()
         if provider not in {"openrouter", "ollama"}:
             raise ValueError("EMBEDDING_PROVIDER must be 'openrouter' or 'ollama'.")
         return provider
+
+    @property
+    def embedding_model(self) -> str:
+        """The embedding model of the configured provider."""
+        if self.normalized_embedding_provider == "ollama":
+            return self.ollama_embedding_model.strip()
+        return self.openrouter_embedding_model.strip()
 
     @property
     def embedding_tokenizer(self) -> str:
