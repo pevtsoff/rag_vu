@@ -103,6 +103,28 @@ async def test_nodes_and_chunks_are_replaced_and_vectors_stored_by_size(
     assert await _vector_sizes(infrastructure) == []
 
 
+async def test_reparsing_keeps_node_ids_so_source_links_stay_valid(
+    infrastructure: Infrastructure,
+) -> None:
+    document = _document()
+    nodes = [
+        ParsedNode("A", "First", ["Doc", "A"], "s1.a1", "article"),
+        ParsedNode("H", "Header", ["Doc"], "n1", "header"),
+        ParsedNode("H", "Header again", ["Doc"], "n1", "header"),
+    ]
+    async with infrastructure.unit_of_work() as uow:
+        await uow.documents.add(document)
+        await uow.nodes.replace_for_document(document.id, nodes)
+        first = [node.id for node in await uow.nodes.list_with_text(document.id)]
+        await uow.commit()
+    async with infrastructure.unit_of_work() as uow:
+        await uow.nodes.replace_for_document(document.id, nodes)
+        second = [node.id for node in await uow.nodes.list_with_text(document.id)]
+        await uow.commit()
+        assert await uow.nodes.get_with_document_title(first[0]) is not None
+    assert len(set(first)) == 3 and second == first
+
+
 async def _vector_sizes(infrastructure: Infrastructure) -> list[int]:
     async with infrastructure.session_factory() as session:
         result = await session.execute(text("SELECT vector_dims(embedding_small) FROM chunks"))

@@ -59,6 +59,12 @@ class AppSettings(BaseSettings):
     # reasoning before the visible answer; too low and Ollama truncates with no content at
     # all, 200 OK and done_reason="length" (see OllamaChatModel._completion).
     ollama_max_answer_tokens: int = 2000
+    # Local dedicated cross-encoder reranker (the `reranker` docker-compose service, see
+    # reranker_service/), used when RERANK_PROVIDER=local. Unlike the ollama/openrouter
+    # providers, this is a true cross-encoder rather than listwise LLM prompting, and runs
+    # fully offline/free of charge - see reranker_service/main.py for why this needed its
+    # own service instead of reusing Ollama or text-embeddings-inference.
+    local_reranker_base_url: str = "http://reranker:8000"
     top_k: int = 5
     retrieval_candidate_k: int = 30
     rerank_candidate_k: int = 20

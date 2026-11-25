@@ -31,6 +31,9 @@ dependencies = [
     "opentelemetry-api>=1.45.0",
     "opentelemetry-sdk>=1.45.0",
     "opentelemetry-instrumentation-httpx>=0.66b0",
+    # Serves the local cross-encoder reranker (reranker_service/, `reranker` compose service).
+    # torch/transformers are already here via docling, so this adds little on top.
+    "sentence-transformers>=5.0",
 ]
 
 [project.optional-dependencies]

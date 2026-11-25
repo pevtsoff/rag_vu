@@ -4,6 +4,7 @@ from uuid import uuid4
 import httpx
 
 from app.adapters.outbound.rerank.fallback_reranker import FallbackReranker
+from app.adapters.outbound.rerank.local_reranker import LocalReranker
 from app.adapters.outbound.rerank.ollama_reranker import OllamaReranker
 from app.adapters.outbound.rerank.openrouter_reranker import OpenRouterReranker
 from app.adapters.outbound.rerank.passthrough_reranker import PassthroughReranker
@@ -56,3 +57,26 @@ async def test_failing_reranker_falls_back_to_hybrid_order() -> None:
 async def test_passthrough_reranker_caps_results() -> None:
     matches = _matches(4)
     assert await PassthroughReranker(top_k=3).rerank("q", matches) == matches[:3]
+
+
+async def test_local_rerank_applies_top_k_and_scores_without_model_field() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        sent = body(request)
+        assert request.url.path == "/rerank" and sent["top_n"] == 2
+        assert "model" not in sent
+        results = [
+            {"index": 2, "relevance_score": 0.9},
+            {"index": 0, "relevance_score": 0.5},
+            {"index": 9},
+        ]
+        return httpx.Response(200, json={"results": results})
+
+    reranker = LocalReranker(mock_clients(handler), "http://reranker:8000", top_k=2)
+    reranked = await reranker.rerank("question", _matches())
+    assert [(m.text, m.score) for m in reranked] == [("Passage 2", 0.9), ("Passage 0", 0.5)]
+
+
+async def test_local_reranker_feeds_fallback_on_failure() -> None:
+    failing = LocalReranker(mock_clients(lambda r: httpx.Response(503)), "http://reranker:8000", 5)
+    matches = _matches(4)
+    assert await FallbackReranker(failing, top_k=2).rerank("q", matches) == matches[:2]

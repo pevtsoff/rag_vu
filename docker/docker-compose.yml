@@ -166,6 +166,44 @@ services:
       api:
         condition: service_started
 
+  # Local cross-encoder reranker (Qwen3-Reranker-0.6B) served via
+  # sentence-transformers' CrossEncoder, which has native support for this
+  # model's causal-LM scoring scheme - see reranker_service/main.py for why
+  # this exists instead of Ollama (no rerank endpoint; listwise LLM
+  # prompting is the only option, see ollama_reranker.py) or
+  # text-embeddings-inference (does not support this model's architecture).
+  # CPU-only: this host's Radeon 780M iGPU has no usable ROCm support, so
+  # there is no GPU path to offer here.
+  #
+  # Reuses the app image: torch/transformers are already in it via docling, and
+  # sentence-transformers is locked in uv.lock with everything else. The model weights
+  # are downloaded on first start into the shared HF cache volume and reused afterwards
+  # (so the first start needs HF_HUB_OFFLINE=0).
+  reranker:
+    <<: *app-image
+    container_name: rag_vu-reranker
+    environment:
+      HF_HOME: /hf-cache
+      RERANKER_MODEL: ${RERANKER_MODEL:-Qwen/Qwen3-Reranker-0.6B}
+      RERANKER_MAX_LENGTH: ${RERANKER_MAX_LENGTH:-512}
+      TRACING_ENABLED: "false"
+    volumes:
+      - ../reranker_service:/app/reranker_service
+      - rag_vu-hf-cache:/hf-cache
+    command: ["uvicorn", "reranker_service.main:app", "--host", "0.0.0.0", "--port", "8000"]
+    deploy:
+      resources:
+        limits:
+          cpus: "4.0"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=5)"]
+      interval: 10s
+      timeout: 10s
+      # Generous on purpose: the very first start also downloads the model weights.
+      start_period: 300s
+      retries: 5
+    stop_grace_period: 30s
+
   # Arize Phoenix: trace UI at http://localhost:${PORT_PREFIX}006, OTLP/HTTP at /v1/traces.
   # Traces are stored in SQLite under the volume; delete the volume to start clean.
   #

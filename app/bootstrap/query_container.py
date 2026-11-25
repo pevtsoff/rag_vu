@@ -6,6 +6,7 @@ from app.adapters.outbound.llm.free_model_policy import free_model_chain, requir
 from app.adapters.outbound.llm.ollama_chat_model import OllamaChatModel
 from app.adapters.outbound.llm.openrouter_chat_model import OpenRouterChatModel
 from app.adapters.outbound.rerank.fallback_reranker import FallbackReranker
+from app.adapters.outbound.rerank.local_reranker import LocalReranker
 from app.adapters.outbound.rerank.ollama_reranker import OllamaReranker
 from app.adapters.outbound.rerank.openrouter_reranker import OpenRouterReranker
 from app.adapters.outbound.rerank.passthrough_reranker import PassthroughReranker
@@ -62,8 +63,11 @@ class QueryContainer:
         if provider == "ollama":
             model = settings.ollama_rerank_model
             inner = OllamaReranker(clients, settings.ollama_base_url, model, settings.top_k)
+        elif provider == "local":
+            model = "local/qwen3-reranker-0.6b"
+            inner = LocalReranker(clients, settings.local_reranker_base_url, settings.top_k)
         elif provider != "openrouter":
-            raise ValueError("RERANK_PROVIDER must be 'ollama' or 'openrouter'.")
+            raise ValueError("RERANK_PROVIDER must be 'ollama', 'openrouter' or 'local'.")
         elif not settings.openrouter_api_key:
             return PassthroughReranker(settings.top_k), PASSTHROUGH_RERANK_MODEL
         else:

@@ -1,4 +1,5 @@
-from uuid import UUID, uuid4
+from collections import Counter
+from uuid import NAMESPACE_URL, UUID, uuid5
 
 from sqlalchemy import delete, insert, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -24,7 +25,7 @@ class SqlAlchemyNodeRepository(NodeRepository):
         )
         await self._session.execute(delete(NodeModel).where(NodeModel.document_id == document_id))
         if nodes:
-            rows = [_row(document_id, node) for node in nodes]
+            rows = _rows(document_id, nodes)
             await self._session.execute(insert(NodeModel), rows)
         return len(nodes)
 
@@ -50,9 +51,31 @@ class SqlAlchemyNodeRepository(NodeRepository):
         return _to_entity(node), file_name or ""
 
 
-def _row(document_id: UUID, node: ParsedNode) -> dict:
+def _rows(document_id: UUID, nodes: list[ParsedNode]) -> list[dict]:
+    # A path can repeat within a document (e.g. the "n1" fallback), so its occurrence number
+    # is part of the id too.
+    seen: Counter[str] = Counter()
+    rows = []
+    for node in nodes:
+        occurrence = seen[node.path]
+        seen[node.path] += 1
+        rows.append(_row(document_id, node, occurrence))
+    return rows
+
+
+def stable_node_id(document_id: UUID, path: str, occurrence: int = 0) -> UUID:
+    """The same node of the same document keeps its id across re-parses.
+
+    Source links handed out in answers (``/api/v1/nodes/{id}/html``) point at node ids, and
+    every re-parse replaces all of a document's nodes; random ids broke every link given out
+    before the latest rerun or resumed pipeline.
+    """
+    return uuid5(NAMESPACE_URL, f"rag_vu:node:{document_id}:{path}:{occurrence}")
+
+
+def _row(document_id: UUID, node: ParsedNode, occurrence: int) -> dict:
     return {
-        "id": uuid4(),
+        "id": stable_node_id(document_id, node.path, occurrence),
         "document_id": document_id,
         "title": node.title,
         "text": node.text,
