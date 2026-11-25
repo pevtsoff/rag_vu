@@ -8,5 +8,7 @@ class PassthroughReranker(Reranker):
     def __init__(self, top_k: int) -> None:
         self._top_k = top_k
 
-    async def rerank(self, query: str, matches: list[RetrievedMatch]) -> list[RetrievedMatch]:
-        return matches[: self._top_k]
+    async def rerank(
+        self, query: str, matches: list[RetrievedMatch], limit: int | None = None
+    ) -> list[RetrievedMatch]:
+        return matches[: limit or self._top_k]

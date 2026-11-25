@@ -124,7 +124,7 @@ services:
   worker-embedding:
     <<: *worker
     container_name: rag_vu-worker-embedding
-    command: ["celery", "-A", "app.adapters.inbound.celery_jobs.celery_app:celery_app", "worker", "--loglevel=INFO", "--concurrency=2", "--queues=embedding"]
+    command: ["celery", "-A", "app.adapters.inbound.celery_jobs.celery_app:celery_app", "worker", "--loglevel=INFO", "--concurrency=2", "--queues=embedding,versioning"]
 
   query:
     <<: *app-image

@@ -16,10 +16,12 @@ _COPIED_FIELDS = (
     "parsed",
     "chunked",
     "embedded",
+    "versioned",
     "uploaded_at",
     "parsed_at",
     "chunked_at",
     "embedded_at",
+    "versioned_at",
     "error_message",
     "error_stage",
 )

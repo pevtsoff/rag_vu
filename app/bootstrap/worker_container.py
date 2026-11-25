@@ -20,6 +20,7 @@ from app.application.use_cases.stages.embed_stage_job import EmbedStageJob
 from app.application.use_cases.stages.parse_stage_job import ParseStageJob
 from app.application.use_cases.stages.stage_job import StageJob
 from app.application.use_cases.stages.upload_stage_job import UploadStageJob
+from app.application.use_cases.stages.version_stage_job import VersionStageJob
 from app.bootstrap.infrastructure import Infrastructure
 
 
@@ -48,6 +49,9 @@ class WorkerContainer:
             ChunkStageJob.consumer: lambda: ChunkStageJob(self._clock, self._chunker),
             EmbedStageJob.consumer: lambda: EmbedStageJob(
                 self._clock, self.infrastructure.embedder, self._settings.embedding_batch_size
+            ),
+            VersionStageJob.consumer: lambda: VersionStageJob(
+                self._clock, self._settings.versioning_thresholds
             ),
         }
         if consumer not in builders:

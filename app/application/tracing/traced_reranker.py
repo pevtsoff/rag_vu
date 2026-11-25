@@ -16,13 +16,15 @@ class TracedReranker(Reranker):
         self._model_name = model_name
         self._top_k = top_k
 
-    async def rerank(self, query: str, matches: list[RetrievedMatch]) -> list[RetrievedMatch]:
+    async def rerank(
+        self, query: str, matches: list[RetrievedMatch], limit: int | None = None
+    ) -> list[RetrievedMatch]:
         with self._tracer.span("rerank", SpanKind.RERANKER) as span:
             span.set_input(query)
             span.set_model(self._model_name)
-            span.set_top_k(self._top_k)
+            span.set_top_k(limit or self._top_k)
             span.set_documents(DocumentRole.RERANK_INPUT, match_documents(matches))
-            reranked = await self._inner.rerank(query, matches)
+            reranked = await self._inner.rerank(query, matches, limit)
             span.set_documents(DocumentRole.RERANK_OUTPUT, match_documents(reranked))
             span.set_attributes({RERANK_ORDER_CHANGED: _order_changed(matches, reranked)})
             return reranked

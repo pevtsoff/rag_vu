@@ -16,11 +16,13 @@ class FallbackReranker(Reranker):
         self._inner = inner
         self._top_k = top_k
 
-    async def rerank(self, query: str, matches: list[RetrievedMatch]) -> list[RetrievedMatch]:
+    async def rerank(
+        self, query: str, matches: list[RetrievedMatch], limit: int | None = None
+    ) -> list[RetrievedMatch]:
         if not matches:
             return []
         try:
-            return await self._inner.rerank(query, matches)
+            return await self._inner.rerank(query, matches, limit)
         except RECOVERABLE_ERRORS as exc:
             logger.warning("Reranking failed (%s); using hybrid retrieval order.", exc)
-            return matches[: self._top_k]
+            return matches[: limit or self._top_k]

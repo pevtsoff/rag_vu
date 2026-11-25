@@ -4,6 +4,9 @@ from functools import cached_property
 
 from app.adapters.outbound.rendering.jinja_node_renderer import JinjaNodeRenderer
 from app.adapters.outbound.storage.local_file_storage import LocalFileStorage
+from app.application.use_cases.documents.change_document_versioning import (
+    ChangeDocumentVersioning,
+)
 from app.application.use_cases.documents.get_document import GetDocument
 from app.application.use_cases.documents.list_document_pipelines import ListDocumentPipelines
 from app.application.use_cases.documents.render_node import RenderNode
@@ -22,7 +25,13 @@ class ApiContainer:
     @cached_property
     def upload_document(self) -> UploadDocument:
         storage = LocalFileStorage(self.infrastructure.settings.upload_path)
-        return UploadDocument(self._uow, storage, self.infrastructure.tracer)
+        return UploadDocument(
+            self._uow, storage, self.infrastructure.tracer, self.infrastructure.clock
+        )
+
+    @cached_property
+    def change_document_versioning(self) -> ChangeDocumentVersioning:
+        return ChangeDocumentVersioning(self._uow)
 
     @cached_property
     def rerun_pipeline(self) -> RerunPipeline:

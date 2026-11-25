@@ -19,6 +19,7 @@ TRIGGERS = {
     PipelineStage.PARSING: "FileUploadedEvent",
     PipelineStage.CHUNKING: "DocumentParsedEvent",
     PipelineStage.EMBEDDING: "DocumentChunkedEvent",
+    PipelineStage.VERSIONING: "DocumentEmbeddedEvent",
 }
 
 

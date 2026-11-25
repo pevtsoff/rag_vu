@@ -7,7 +7,7 @@ from app.adapters.inbound.event_processor.event_processor_loop import EventProce
 from app.adapters.outbound.messaging.celery_job_dispatcher import CeleryJobDispatcher
 from app.application.dto.job_route import JobRoute
 
-STAGES = ("upload", "parsing", "chunking", "embedding")
+STAGES = ("upload", "parsing", "chunking", "embedding", "versioning")
 
 
 def test_each_stage_has_its_own_queue_and_task() -> None:

@@ -15,10 +15,12 @@ class PipelineResponse(BaseModel):
     parsed: bool
     chunked: bool
     embedded: bool
+    versioned: bool = False
     uploaded_at: datetime | None
     parsed_at: datetime | None
     chunked_at: datetime | None
     embedded_at: datetime | None
+    versioned_at: datetime | None = None
     error_message: str | None
     error_stage: str | None
     created_at: datetime | None = None

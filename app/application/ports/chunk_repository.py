@@ -19,5 +19,15 @@ class ChunkRepository(ABC):
     async def count_for_document(self, document_id: UUID) -> int: ...
 
     @abstractmethod
+    async def list_embedded(
+        self, document_id: UUID, dimensions: int
+    ) -> list[tuple[str, list[float]]]:
+        """``(text, vector)`` of every chunk with a vector of ``dimensions``, in document order."""
+
+    @abstractmethod
+    async def embedded_dimensions(self, document_id: UUID) -> int | None:
+        """The vector size the document's chunks were embedded with, or None."""
+
+    @abstractmethod
     async def store_embeddings(self, vectors: dict[UUID, list[float]], dimensions: int) -> None:
         """Store each chunk's vector in the column matching ``dimensions``."""

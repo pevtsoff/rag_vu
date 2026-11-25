@@ -15,6 +15,7 @@ _COMPLETION_FIELDS = {
     PipelineStage.PARSING: ("parsed", "parsed_at"),
     PipelineStage.CHUNKING: ("chunked", "chunked_at"),
     PipelineStage.EMBEDDING: ("embedded", "embedded_at"),
+    PipelineStage.VERSIONING: ("versioned", "versioned_at"),
 }
 
 
@@ -28,10 +29,12 @@ class Pipeline:
     parsed: bool = False
     chunked: bool = False
     embedded: bool = False
+    versioned: bool = False
     uploaded_at: datetime | None = None
     parsed_at: datetime | None = None
     chunked_at: datetime | None = None
     embedded_at: datetime | None = None
+    versioned_at: datetime | None = None
     error_message: str | None = None
     error_stage: str | None = None
     created_at: datetime | None = None

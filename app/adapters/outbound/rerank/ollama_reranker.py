@@ -25,7 +25,9 @@ class OllamaReranker(Reranker):
         self._model = model.strip()
         self._top_k = top_k
 
-    async def rerank(self, query: str, matches: list[RetrievedMatch]) -> list[RetrievedMatch]:
+    async def rerank(
+        self, query: str, matches: list[RetrievedMatch], limit: int | None = None
+    ) -> list[RetrievedMatch]:
         if not matches:
             return []
         async with self._client_factory() as client:
@@ -35,7 +37,7 @@ class OllamaReranker(Reranker):
         # Candidates the model left out follow the ranked ones, so none is silently lost.
         ordered = list(dict.fromkeys(ranking))
         ordered.extend(index for index in range(len(matches)) if index not in ordered)
-        return [matches[index] for index in ordered[: self._top_k]]
+        return [matches[index] for index in ordered[: limit or self._top_k]]
 
     def _request(self, query: str, matches: list[RetrievedMatch]) -> dict:
         documents = [{"index": index, "text": match.text} for index, match in enumerate(matches)]

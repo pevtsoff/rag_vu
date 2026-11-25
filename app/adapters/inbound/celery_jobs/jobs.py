@@ -8,6 +8,7 @@ from app.application.use_cases.events.default_event_routes import (
     EMBEDDING_ROUTE,
     PARSING_ROUTE,
     UPLOAD_ROUTE,
+    VERSIONING_ROUTE,
 )
 
 
@@ -29,3 +30,8 @@ def chunking_job(inbox_id: str) -> str:
 @celery_app.task(name=job_task_name(EMBEDDING_ROUTE.consumer))
 def embedding_job(inbox_id: str) -> str:
     return run_inbox_job(EMBEDDING_ROUTE.consumer, inbox_id)
+
+
+@celery_app.task(name=job_task_name(VERSIONING_ROUTE.consumer))
+def versioning_job(inbox_id: str) -> str:
+    return run_inbox_job(VERSIONING_ROUTE.consumer, inbox_id)

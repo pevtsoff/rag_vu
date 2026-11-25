@@ -13,6 +13,7 @@ from app.application.use_cases.stages.chunk_stage_job import ChunkStageJob
 from app.application.use_cases.stages.embed_stage_job import EmbedStageJob
 from app.application.use_cases.stages.parse_stage_job import ParseStageJob
 from app.application.use_cases.stages.upload_stage_job import UploadStageJob
+from app.application.use_cases.stages.version_stage_job import VersionStageJob
 from app.bootstrap.infrastructure import Infrastructure
 from tests.unit.fakes.fake_ports import FakeEmbedder, FakeParser, RecordingDispatcher
 
@@ -26,7 +27,7 @@ class PipelineRunner:
         self.storage = LocalFileStorage(infrastructure.settings.upload_path)
         self.embedder = FakeEmbedder(dimensions=768)
         self.dispatcher = RecordingDispatcher()
-        self.upload = UploadDocument(uow, self.storage)
+        self.upload = UploadDocument(uow, self.storage, clock=clock)
         self.relay = RelayOutboxBatch(
             uow, routes, DeliveryDispatcher(self.dispatcher, routes), clock, 50
         )
@@ -35,6 +36,7 @@ class PipelineRunner:
             ParseStageJob(clock, parser or FakeParser()),
             ChunkStageJob(clock, TextChunker()),
             EmbedStageJob(clock, self.embedder, batch_size=2),
+            VersionStageJob(clock),
         ]
         self.runners = {
             job.consumer: InboxJobRunner(

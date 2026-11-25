@@ -1,4 +1,4 @@
-"""Every chunk of a document has a vector; the pipeline run succeeded."""
+"""Every chunk of a document has a vector; the versioning stage runs next."""
 
 from dataclasses import dataclass
 

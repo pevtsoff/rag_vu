@@ -4,12 +4,16 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
 from app.application.errors import (
+    AmbiguousVersioningTargetError,
     ApplicationError,
+    ClusterNotFoundError,
     ConcurrencyConflictError,
     DocumentNotFoundError,
+    DuplicateContentError,
     NoActivePipelineError,
     NodeNotFoundError,
     StorageError,
+    VersioningTargetNotFoundError,
 )
 
 _RESPONSES: dict[type[ApplicationError], tuple[int, str | None]] = {
@@ -17,6 +21,10 @@ _RESPONSES: dict[type[ApplicationError], tuple[int, str | None]] = {
     NodeNotFoundError: (404, "Node not found"),
     NoActivePipelineError: (409, None),
     ConcurrencyConflictError: (409, None),
+    VersioningTargetNotFoundError: (422, None),
+    AmbiguousVersioningTargetError: (409, None),
+    DuplicateContentError: (409, None),
+    ClusterNotFoundError: (404, None),
     StorageError: (500, None),
 }
 

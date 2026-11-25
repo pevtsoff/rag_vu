@@ -19,11 +19,13 @@ class SearchDocuments:
         self._retriever = retriever
         self._tracer = tracer or NullTracer()
 
-    async def execute(self, query: str, top_k: int) -> list[RetrievedMatch]:
+    async def execute(
+        self, query: str, top_k: int, latest_only: bool = True
+    ) -> list[RetrievedMatch]:
         with self._tracer.span("documents.search", SpanKind.RETRIEVER) as span:
             span.set_input(query)
             span.set_top_k(top_k)
             vectors = await self._embedder.embed([query], EmbeddingTask.QUERY)
-            matches = (await self._retriever.retrieve(vectors[0], query))[:top_k]
+            matches = (await self._retriever.retrieve(vectors[0], query, latest_only))[:top_k]
             span.set_documents(DocumentRole.RETRIEVED, match_documents(matches))
             return matches

@@ -3,6 +3,7 @@
 from app.domain.documents.breadcrumbs import join_breadcrumbs
 
 HIERARCHY_SEPARATOR = " > "
+PASSAGE_MARKER = "\nТекст фрагмента:\n"
 
 
 def format_breadcrumbs(breadcrumbs: object) -> str:
@@ -24,4 +25,10 @@ def build_retrieved_context(
         metadata.append(f"Breadcrumbs: {hierarchy}")
     if not metadata:
         return text
-    return "\n".join(metadata) + f"\nТекст фрагмента:\n{text}"
+    return "\n".join(metadata) + f"{PASSAGE_MARKER}{text}"
+
+
+def retrieved_passage(context: str) -> str:
+    """The passage text of ``build_retrieved_context`` output, without its metadata lines."""
+    _, marker, passage = context.partition(PASSAGE_MARKER)
+    return passage if marker else context

@@ -6,6 +6,7 @@ from app.domain.documents.document import Document
 from app.domain.documents.node import Node
 from app.domain.documents.pipeline import Pipeline
 from app.domain.events.event_envelope import EventEnvelope
+from app.domain.versioning.document_fingerprint import DocumentFingerprint
 from tests.unit.fakes.inbox_record import InboxRecord
 
 
@@ -18,6 +19,7 @@ class InMemoryStore:
     nodes: dict[UUID, Node] = field(default_factory=dict)
     chunks: dict[UUID, Chunk] = field(default_factory=dict)
     vectors: dict[UUID, tuple[int, list[float]]] = field(default_factory=dict)
+    fingerprints: dict[UUID, DocumentFingerprint] = field(default_factory=dict)
     outbox: dict[UUID, EventEnvelope] = field(default_factory=dict)
     published: set[UUID] = field(default_factory=set)
     inbox: dict[UUID, InboxRecord] = field(default_factory=dict)

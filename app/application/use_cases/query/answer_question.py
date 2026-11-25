@@ -15,11 +15,15 @@ from app.application.tracing.trace_attributes import (
     QUERY_RETRIEVAL_QUERY,
     QUERY_REWRITTEN,
     QUERY_SOURCE_COUNT,
+    QUERY_VERSION_COUNT,
+    RETRIEVAL_LATEST_ONLY,
 )
 from app.application.use_cases.query.answer_prompt import build_answer_messages
 from app.application.use_cases.query.reasoning_filter import remove_reasoning_leak
 from app.application.use_cases.query.retrieval_query import build_retrieval_query
 from app.application.use_cases.query.source_links import append_source_links
+from app.application.use_cases.query.version_collapse import collapse_unchanged, version_count
+from app.application.use_cases.query.version_question import asks_about_versions
 from app.domain.documents.embedding_task import EmbeddingTask
 from app.domain.retrieval.retrieved_match import RetrievedMatch
 
@@ -34,6 +38,7 @@ class AnswerQuestion:
         api_base_url: str,
         max_history_turns: int,
         tracer: Tracer | None = None,
+        multi_version_budget: int = 10,
     ) -> None:
         self._embedder = embedder
         self._retriever = retriever
@@ -42,6 +47,7 @@ class AnswerQuestion:
         self._api_base_url = api_base_url
         self._max_history_turns = max_history_turns
         self._tracer = tracer or NullTracer()
+        self._multi_version_budget = multi_version_budget
 
     async def execute(
         self, question: str, history: list[dict[str, str]], session_id: str | None = None
@@ -64,12 +70,16 @@ class AnswerQuestion:
                 QUERY_REWRITTEN: retrieval_query != question,
             }
         )
-        matches = await self._matches(retrieval_query)
+        # Questions about changes need every version; everything else only the latest one.
+        latest_only = not asks_about_versions(question)
+        matches = await self._matches(retrieval_query, latest_only)
         messages = build_answer_messages(question, history, matches, self._max_history_turns)
         span.set_attributes(
             {
                 QUERY_SOURCE_COUNT: len(matches),
                 QUERY_CONTEXT_CHARS: sum(len(match.text) for match in matches),
+                RETRIEVAL_LATEST_ONLY: latest_only,
+                QUERY_VERSION_COUNT: version_count(matches),
             }
         )
         answer = await self._final_answer(messages, span)
@@ -83,7 +93,12 @@ class AnswerQuestion:
             raise AnswerGenerationError("The chat model returned reasoning without a final answer.")
         return answer
 
-    async def _matches(self, retrieval_query: str) -> list[RetrievedMatch]:
+    async def _matches(self, retrieval_query: str, latest_only: bool) -> list[RetrievedMatch]:
         vectors = await self._embedder.embed([retrieval_query], EmbeddingTask.QUERY)
-        candidates = await self._retriever.retrieve(vectors[0], retrieval_query)
-        return await self._reranker.rerank(retrieval_query, candidates)
+        candidates = await self._retriever.retrieve(vectors[0], retrieval_query, latest_only)
+        if latest_only:
+            return await self._reranker.rerank(retrieval_query, candidates)
+        # Several versions of one passage must all survive reranking to be compared.
+        budget = self._multi_version_budget
+        reranked = await self._reranker.rerank(retrieval_query, candidates, budget)
+        return collapse_unchanged(reranked, budget)

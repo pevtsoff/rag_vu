@@ -3,6 +3,7 @@
 from app.domain.events.document_chunked_event import DocumentChunkedEvent
 from app.domain.events.document_embedded_event import DocumentEmbeddedEvent
 from app.domain.events.document_parsed_event import DocumentParsedEvent
+from app.domain.events.document_versioned_event import DocumentVersionedEvent
 from app.domain.events.event_registry import EventRegistry
 from app.domain.events.file_received_event import FileReceivedEvent
 from app.domain.events.file_uploaded_event import FileUploadedEvent
@@ -17,6 +18,7 @@ def default_event_registry() -> EventRegistry:
             DocumentParsedEvent,
             DocumentChunkedEvent,
             DocumentEmbeddedEvent,
+            DocumentVersionedEvent,
             PipelineFailedEvent,
         ]
     )

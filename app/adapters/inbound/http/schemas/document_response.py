@@ -14,5 +14,7 @@ class DocumentResponse(BaseModel):
     mime_type: str
     doc_metadata: dict | None = None
     version: int
+    cluster_id: UUID | None = None
+    is_latest: bool = True
     created_at: datetime | None = None
     updated_at: datetime | None = None

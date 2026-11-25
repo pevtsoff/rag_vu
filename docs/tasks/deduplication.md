@@ -1,5 +1,39 @@
 # Task: Hybrid RAG Document Deduplication & Versioning (`pgvector` + MinHash)
 
+## Status: implemented (2026-11-25)
+
+Built as specified below, with these decisions made during implementation:
+
+- **Migrations.** `20261124_0001` (columns, constraints) and `20261125_0001` (the
+  `pipelines.versioned`/`versioned_at` columns of the new stage, the partial unique indexes on
+  `deleted_at IS NULL`, and `ix_documents_latest_file_name` for the `force_upload` lookup).
+- **Versioning stage.** `VersionStageJob` (`app/application/use_cases/stages/`), queue
+  `versioning`, served by the `worker-embedding` container. The decision logic is pure domain
+  code in `app/domain/versioning/` (`VersionMatcher`, `MinHasher`, `law_identifier`). It is
+  recorded in `doc_metadata.versioning` and in `DocumentVersionedEvent`. The stage span carries
+  the fingerprint (identifier, redaction, whether an average embedding exists), not the
+  decision, because the decision is taken in the persist transaction.
+- **Other embedding sizes.** Instead of failing the pipeline, documents embedded with a
+  non-768 model get no `avg_embedding`, a warning is logged, and they are versioned by legal
+  identifier only. Failing would break every upload with the default OpenRouter embedder.
+- **MinHash** is implemented in-repo (no `datasketch` dependency), with 4-word shingles and a
+  fixed seed, so stored signatures stay comparable across releases.
+- **Duplicates** keep their row (`is_latest = FALSE`, `doc_metadata.duplicate_of`) and are
+  excluded from every search. They are not soft-deleted.
+- **`force_upload=create_new`** doesn't need `cluster_id` when several clusters share the
+  file name: it changes none of them. `replace_latest` does (`409`). The upload is renamed
+  to the first free `<stem>_<n><ext>`.
+- **`replace_latest`** clears the replaced row's `sha256` (kept as
+  `doc_metadata.replaced_sha256`), so the old file can be uploaded again later.
+- **`latest_only`**: the chat switches to multi-version search when the question asks about
+  changes (`asks_about_versions`). `POST /documents/search` takes `latest_only` explicitly.
+- **Reranking in multi-version mode** keeps up to `MULTI_VERSION_CHUNK_BUDGET` passages
+  (`Reranker.rerank(..., limit)`), so the versions of one passage survive together.
+- **Unchanged passages** are collapsed by a Python hash with the same normalisation as
+  `chunks.content_hash`, computed on the passage text that retrieval returns (node text for
+  BM25 rows, chunk text for vector rows).
+- **Not built yet:** the five multi-version Ragas questions (§5) — add them with the Ragas task.
+
 ## Goal
 Deduplicate and version documents on upload using a two-step check in PostgreSQL: fast semantic search via L2-normalized average embeddings (`pgvector` HNSW), followed by lexical/structural verification using pre-stored MinHash signatures. Support both latest-only and multi-version retrieval.
 
@@ -80,6 +114,10 @@ fingerprints), because `avg_embedding` needs the chunk embeddings.
    - `create_new`: the upload **starts a new cluster** (`version = 1`, `cluster_id = id`),
      even if the identity or fingerprint rules would make it a version. Use when two
      different documents happen to share a file name, or a wrong merge must be avoided.
+     The upload is **renamed** with the first free suffix (`law.pdf` → `law_2.pdf`,
+     `law_3.pdf`, …, checked against every live document of any version), so the two
+     documents can't be confused by name. The original name is kept in
+     `doc_metadata.versioning.original_file_name`; the file is stored under the new name.
    - In both cases the versioning step (§2.2) **doesn't change the assignment**. It still
      computes and stores the fingerprints, so later uploads can match against them.
    - Errors, all returned before anything is stored:
@@ -218,8 +256,9 @@ the `retrieval.hybrid` span.
 - Test `force_upload` (§2.1):
   - `replace_latest` on an existing file name: the old latest is soft-deleted, the new
     document has the same cluster and version and is the only latest one.
-  - `create_new` on an existing file name: a new cluster with `version = 1`; the old
-    cluster is unchanged; the versioning step doesn't move it, even when it would match.
+  - `create_new` on an existing file name: a new cluster with `version = 1`, renamed to
+    `law_2.pdf` (then `law_3.pdf`); the old cluster is unchanged; the versioning step
+    doesn't move it, even when it would match.
   - Errors: `force_upload` with an unknown file name → 422; a name shared by two clusters without
     `cluster_id` → 409; `create_new` with identical content → 409.
 - Test identity: same law identifier with changed text → new version; a different

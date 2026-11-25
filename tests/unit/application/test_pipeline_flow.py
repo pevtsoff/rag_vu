@@ -11,6 +11,7 @@ EXPECTED_EVENTS = [
     "DocumentParsedEvent",
     "DocumentChunkedEvent",
     "DocumentEmbeddedEvent",
+    "DocumentVersionedEvent",
 ]
 
 
@@ -20,13 +21,14 @@ async def test_upload_flows_through_every_stage_and_succeeds() -> None:
 
     order = await harness.drain()
 
-    assert order == ["upload", "parsing", "chunking", "embedding"]
+    assert order == ["upload", "parsing", "chunking", "embedding", "versioning"]
     assert harness.store.outbox_types() == EXPECTED_EVENTS
     assert set(harness.store.outbox) == harness.store.published
     assert all(record.status == "PROCESSED" for record in harness.store.inbox.values())
     pipeline = harness.store.pipelines[result.pipeline.id]
     assert pipeline.status is PipelineStatus.SUCCEEDED
     assert (pipeline.uploaded, pipeline.parsed, pipeline.chunked, pipeline.embedded) == (True,) * 4
+    assert pipeline.versioned
     document = harness.store.documents[result.document.id]
     assert document.status is PipelineStatus.SUCCEEDED
     assert document.file_path == f"/documents/{document.id}/law.pdf"

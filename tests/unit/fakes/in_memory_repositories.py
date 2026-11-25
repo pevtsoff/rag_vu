@@ -19,6 +19,8 @@ from app.domain.documents.node import Node
 from app.domain.documents.parsed_node import ParsedNode
 from app.domain.documents.pipeline import Pipeline
 from app.domain.events.event_envelope import EventEnvelope
+from app.domain.versioning.document_fingerprint import DocumentFingerprint
+from app.domain.versioning.fingerprint_candidate import FingerprintCandidate
 from tests.unit.fakes.in_memory_store import InMemoryStore
 from tests.unit.fakes.inbox_record import InboxRecord
 
@@ -36,10 +38,96 @@ class InMemoryDocumentRepository(DocumentRepository):
     async def add(self, document: Document) -> None:
         if document.sha256 and await self.get_by_sha256(document.sha256):
             raise ConcurrencyConflictError("duplicate sha256")
+        self._check_versions(document)
         self._store.documents[document.id] = document
 
     async def update(self, document: Document) -> None:
+        self._check_versions(document)
         self._store.documents[document.id] = document
+
+    async def latest_with_file_name(
+        self, file_name: str, for_update: bool = False
+    ) -> list[Document]:
+        return [d for d in self._latest() if d.file_name == file_name]
+
+    async def exists_with_file_name(self, file_name: str) -> bool:
+        return any(
+            d.file_name == file_name and d.deleted_at is None
+            for d in self._store.documents.values()
+        )
+
+    async def latest_in_cluster(
+        self, cluster_id: UUID, for_update: bool = False
+    ) -> Document | None:
+        return next((d for d in self._latest() if d.cluster_id == cluster_id), None)
+
+    async def highest_other_version(self, cluster_id: UUID, exclude_id: UUID) -> Document | None:
+        others = [d for d in self._live(cluster_id) if d.id != exclude_id]
+        return max(others, key=lambda d: d.version, default=None)
+
+    async def max_version(self, cluster_id: UUID) -> int:
+        return max((d.version for d in self._live(cluster_id)), default=0)
+
+    async def store_fingerprint(self, document_id: UUID, fingerprint: DocumentFingerprint) -> None:
+        self._store.fingerprints[document_id] = fingerprint
+
+    async def latest_with_identifier(
+        self, identifier: str, exclude_cluster_id: UUID, vector: list[float] | None
+    ) -> FingerprintCandidate | None:
+        for document in reversed(self._latest()):
+            if (
+                document.cluster_id != exclude_cluster_id
+                and (document.doc_metadata or {}).get("identifier") == identifier
+            ):
+                return self._candidate(document, vector)
+        return None
+
+    async def nearest_latest(
+        self, vector: list[float], max_distance: float, limit: int, exclude_cluster_id: UUID
+    ) -> list[FingerprintCandidate]:
+        candidates = [
+            self._candidate(document, vector)
+            for document in self._latest()
+            if document.cluster_id != exclude_cluster_id
+            and self._store.fingerprints.get(document.id)
+            and self._store.fingerprints[document.id].avg_embedding is not None
+        ]
+        close = [c for c in candidates if 2 * (1 - (c.semantic_similarity or 0)) <= max_distance]
+        return sorted(close, key=lambda c: -(c.semantic_similarity or 0))[:limit]
+
+    def _candidate(self, document: Document, vector: list[float] | None) -> FingerprintCandidate:
+        fingerprint = self._store.fingerprints.get(document.id)
+        semantic = None
+        if vector is not None and fingerprint and fingerprint.avg_embedding is not None:
+            semantic = (1 + sum(a * b for a, b in zip(vector, fingerprint.avg_embedding))) / 2
+        return FingerprintCandidate(
+            document_id=document.id,
+            cluster_id=document.cluster_id,
+            version=document.version,
+            semantic_similarity=semantic,
+            minhash=fingerprint.minhash if fingerprint else None,
+            identifier=(document.doc_metadata or {}).get("identifier"),
+        )
+
+    def _latest(self) -> list[Document]:
+        return [d for d in self._store.documents.values() if d.is_latest and d.deleted_at is None]
+
+    def _live(self, cluster_id: UUID) -> list[Document]:
+        return [
+            d
+            for d in self._store.documents.values()
+            if d.cluster_id == cluster_id and d.deleted_at is None
+        ]
+
+    def _check_versions(self, document: Document) -> None:
+        """The partial unique indexes on (cluster_id) WHERE is_latest and (cluster_id, version)."""
+        if document.deleted_at is not None:
+            return
+        for other in self._live(document.cluster_id):
+            if other.id == document.id:
+                continue
+            if other.version == document.version or (other.is_latest and document.is_latest):
+                raise ConcurrencyConflictError(f"version conflict in cluster {document.cluster_id}")
 
 
 class InMemoryPipelineRepository(PipelineRepository):
@@ -127,6 +215,21 @@ class InMemoryChunkRepository(ChunkRepository):
     async def store_embeddings(self, vectors: dict[UUID, list[float]], dimensions: int) -> None:
         for chunk_id, vector in vectors.items():
             self._store.vectors[chunk_id] = (dimensions, vector)
+
+    async def list_embedded(
+        self, document_id: UUID, dimensions: int
+    ) -> list[tuple[str, list[float]]]:
+        return [
+            (chunk.text, self._store.vectors[chunk.id][1])
+            for chunk in self._document_chunks(document_id)
+            if self._store.vectors.get(chunk.id, (None,))[0] == dimensions
+        ]
+
+    async def embedded_dimensions(self, document_id: UUID) -> int | None:
+        for chunk in self._document_chunks(document_id):
+            if chunk.id in self._store.vectors:
+                return self._store.vectors[chunk.id][0]
+        return None
 
     def _document_chunks(self, document_id: UUID) -> list[Chunk]:
         nodes = {i for i, n in self._store.nodes.items() if n.document_id == document_id}

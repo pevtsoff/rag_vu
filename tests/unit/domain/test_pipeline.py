@@ -17,9 +17,11 @@ def test_stages_run_in_order() -> None:
         PipelineStage.PARSING,
         PipelineStage.CHUNKING,
         PipelineStage.EMBEDDING,
+        PipelineStage.VERSIONING,
     ]
     assert PipelineStage.UPLOADING.next() is PipelineStage.PARSING
-    assert PipelineStage.EMBEDDING.next() is None
+    assert PipelineStage.EMBEDDING.next() is PipelineStage.VERSIONING
+    assert PipelineStage.VERSIONING.next() is None
     assert PipelineStage.CHUNKING.preceding() == (PipelineStage.UPLOADING, PipelineStage.PARSING)
 
 

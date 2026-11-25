@@ -10,6 +10,7 @@ class PipelineStage(StrEnum):
     PARSING = "parsing"
     CHUNKING = "chunking"
     EMBEDDING = "embedding"
+    VERSIONING = "versioning"
 
     def next(self) -> "PipelineStage | None":
         """Return the stage that follows this one, or None for the last stage."""

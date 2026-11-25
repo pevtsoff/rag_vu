@@ -8,6 +8,9 @@ from fastapi.testclient import TestClient
 
 from app.adapters.inbound.http.app_factory import create_app
 from app.adapters.outbound.rendering.jinja_node_renderer import JinjaNodeRenderer
+from app.application.use_cases.documents.change_document_versioning import (
+    ChangeDocumentVersioning,
+)
 from app.application.use_cases.documents.get_document import GetDocument
 from app.application.use_cases.documents.list_document_pipelines import ListDocumentPipelines
 from app.application.use_cases.documents.render_node import RenderNode
@@ -37,6 +40,7 @@ def client(store: InMemoryStore) -> TestClient:
         list_document_pipelines=ListDocumentPipelines(uow),
         render_node=RenderNode(uow, JinjaNodeRenderer()),
         search_documents=SearchDocuments(FakeEmbedder(2), FakeRetriever([match])),
+        change_document_versioning=ChangeDocumentVersioning(uow),
     )
     return TestClient(create_app(services))
 
@@ -143,3 +147,29 @@ def test_search_returns_hits_and_validates_top_k(client: TestClient) -> None:
     assert (
         client.post("/api/v1/documents/search", json={"query": "q", "top_k": 0}).status_code == 422
     )
+
+
+def test_force_upload_errors_are_returned_before_storing(client: TestClient) -> None:
+    files = {"file": ("law.pdf", b"pdf data", "application/pdf")}
+    response = client.post(
+        "/api/v1/documents/upload", files=files, params={"force_upload": "replace_latest"}
+    )
+    assert response.status_code == 422
+    assert "no latest document" in response.json()["detail"]
+    bad = client.post("/api/v1/documents/upload", files=files, params={"force_upload": "x"})
+    assert bad.status_code == 422
+
+
+def test_upload_reports_the_version_and_the_versioning_endpoint_splits(client: TestClient) -> None:
+    uploaded = _upload(client)
+    assert (uploaded["cluster_id"], uploaded["version"], uploaded["is_latest"]) == (
+        uploaded["id"],
+        1,
+        True,
+    )
+    url = f"/api/v1/documents/{uploaded['id']}/versioning"
+    assert client.post(url, json={"mode": "join"}).status_code == 422
+    split = client.post(url, json={"mode": "create_new"})
+    assert split.status_code == 200 and split.json()["cluster_id"] == uploaded["id"]
+    missing = client.post(url, json={"mode": "join", "cluster_id": str(uuid4())})
+    assert missing.status_code == 404

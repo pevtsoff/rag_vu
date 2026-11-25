@@ -35,10 +35,15 @@ class QueryContainer:
 
     @cached_property
     def retriever(self) -> Retriever:
+        settings = self._settings
         limits = RetrievalLimits(
-            self._settings.retrieval_candidate_k,
-            self._settings.rerank_candidate_k,
-            self._settings.rrf_k,
+            settings.retrieval_candidate_k,
+            settings.rerank_candidate_k,
+            settings.rrf_k,
+            settings.multi_version_overfetch,
+            settings.k_per_version,
+            settings.version_relevance_floor,
+            settings.max_versions,
         )
         hybrid = SqlAlchemyHybridRetriever(
             self.infrastructure.session_factory, limits, self._tracer, self._settings.top_k
@@ -102,4 +107,5 @@ class QueryContainer:
             self._settings.rag_vu_api_base_url,
             self._settings.max_history_turns,
             self._tracer,
+            self._settings.multi_version_chunk_budget,
         )

@@ -1,3 +1,4 @@
+from datetime import UTC, datetime
 from uuid import uuid4
 
 import pytest
@@ -51,6 +52,8 @@ def _retriever(session: ScriptedSession) -> SqlAlchemyHybridRetriever:
 
 
 VECTOR = [0.1] * 768
+# The query that loads each candidate's document version (labels, version grouping).
+NO_VERSIONS: list[tuple] = []
 
 
 async def test_vector_and_bm25_results_are_fused_by_node() -> None:
@@ -63,6 +66,7 @@ async def test_vector_and_bm25_results_are_fused_by_node() -> None:
                 (node_id, "dup", None, None, "Law"),
             ],
             [(node_id, "Article 1", ["Law", "Article 1"], "full article", "Law")],
+            NO_VERSIONS,
         ]
     )
     [match] = await _retriever(session).retrieve(VECTOR, "general query")
@@ -77,6 +81,7 @@ async def test_vector_results_survive_a_bm25_failure() -> None:
             [(True, True)],
             [(uuid4(), "vector excerpt", ["Law"], "Title", "Law")],
             SQLAlchemyError("bm25"),
+            NO_VERSIONS,
         ]
     )
     matches = await _retriever(session).retrieve(VECTOR, "general query")
@@ -95,7 +100,7 @@ async def test_exact_article_matches_are_added_for_article_questions() -> None:
         ),
         (other_id, "Статья 480", ["Закон", "Статья 480"], "Wrong article", "Law"),
     ]
-    session = ScriptedSession([[(True, True)], [], [], rows])
+    session = ScriptedSession([[(True, True)], [], [], rows, NO_VERSIONS])
     [match] = await _retriever(session).retrieve(VECTOR, "Что предусмотрено в статье 48?")
     assert match.node_ids == (str(node_id),) and "Article body" in match.text
 
@@ -110,6 +115,7 @@ async def test_list_questions_add_the_whole_parent_article() -> None:
             [(part_id, document_id, "s1.a5.p1", "article_part")],
             [(article_id, "Статья 5", ["Закон", "Статья 5"], "Статья 5. Основания", "Law")],
             [(part_id, "Пункт 1", ["Закон", "Статья 5"], "1. Основание.", "Law")],
+            NO_VERSIONS,
         ]
     )
     matches = await _retriever(session).retrieve(VECTOR, "Какие основания?")
@@ -129,6 +135,7 @@ async def test_vector_and_bm25_candidates_are_traced_up_to_top_k() -> None:
             [(True, True)],
             [(node, f"vector {i}", ["Law"], "Title", "Law") for i, node in enumerate(vector_ids)],
             [(node, "Title", ["Law"], f"bm25 {i}", "Law") for i, node in enumerate(bm25_ids)],
+            NO_VERSIONS,
         ]
     )
     tracer = RecordingTracer()
@@ -150,3 +157,31 @@ async def test_vector_and_bm25_candidates_are_traced_up_to_top_k() -> None:
     ]
     assert bm25.attributes[attr.RETRIEVAL_CANDIDATE_COUNT] == 3
     assert [d.metadata["rank"] for d in bm25.documents[DocumentRole.RETRIEVED]] == [1, 2]
+
+
+async def test_every_version_is_searched_and_labelled_when_latest_only_is_false() -> None:
+    cluster, created = uuid4(), datetime(2024, 1, 1, tzinfo=UTC)
+    nodes = [uuid4() for _ in range(4)]
+    documents = [uuid4(), uuid4()]
+    session = ScriptedSession(
+        [
+            [(True, True)],
+            [
+                (node, f"Статья 1, вариант {i}", ["Закон"], "Статья 1", "law.pdf")
+                for i, node in enumerate(nodes)
+            ],
+            [],
+            [
+                (node, documents[i // 3], cluster, i // 3 + 1, i >= 3, "law.pdf", created, None)
+                for i, node in enumerate(nodes)
+            ],
+        ]
+    )
+    limits = RetrievalLimits(30, 20, 60, k_per_version=2, version_relevance_floor=0.0)
+    matches = await SqlAlchemyHybridRetriever(lambda: session, limits).retrieve(
+        VECTOR, "Что изменилось?", latest_only=False
+    )
+
+    assert [match.version.version for match in matches] == [1, 1, 2]
+    assert all(match.version.cluster_id == str(cluster) for match in matches)
+    assert matches[0].version.content_hash != matches[1].version.content_hash

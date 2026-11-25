@@ -13,13 +13,25 @@ class DocumentModel(TimestampedModel):
     __table_args__ = (
         Index("uq_documents_sha256", "sha256", unique=True),
         Index("ix_documents_cluster_id", "cluster_id"),
+        # Soft-deleted rows (force_upload=replace_latest) don't count for version uniqueness.
         Index(
             "uq_documents_one_latest_per_cluster",
             "cluster_id",
             unique=True,
-            postgresql_where=text("is_latest"),
+            postgresql_where=text("is_latest AND deleted_at IS NULL"),
         ),
-        Index("uq_documents_cluster_version", "cluster_id", "version", unique=True),
+        Index(
+            "uq_documents_cluster_version",
+            "cluster_id",
+            "version",
+            unique=True,
+            postgresql_where=text("deleted_at IS NULL"),
+        ),
+        Index(
+            "ix_documents_latest_file_name",
+            "file_name",
+            postgresql_where=text("is_latest AND deleted_at IS NULL"),
+        ),
         Index(
             "ix_documents_avg_embedding_hnsw",
             "avg_embedding",

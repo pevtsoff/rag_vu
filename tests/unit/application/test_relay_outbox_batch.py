@@ -3,7 +3,7 @@ from uuid import uuid4
 from app.application.use_cases.events.default_event_routes import default_event_routes
 from app.application.use_cases.events.delivery_dispatcher import DeliveryDispatcher
 from app.application.use_cases.events.relay_outbox_batch import RelayOutboxBatch
-from app.domain.events.document_embedded_event import DocumentEmbeddedEvent
+from app.domain.events.document_versioned_event import DocumentVersionedEvent
 from app.domain.events.event_envelope import EventEnvelope
 from app.domain.events.file_uploaded_event import FileUploadedEvent
 from tests.unit.fakes.fake_clock import FakeClock
@@ -67,12 +67,15 @@ async def test_relaying_the_same_event_again_creates_no_second_delivery() -> Non
 async def test_events_without_consumers_are_only_marked_published() -> None:
     store, dispatcher = InMemoryStore(), RecordingDispatcher()
     envelope = EventEnvelope.from_event(
-        DocumentEmbeddedEvent(
-            producer="embedding",
+        DocumentVersionedEvent(
+            producer="versioning",
             document_id=uuid4(),
             pipeline_id=uuid4(),
-            chunk_count=1,
-            dimensions=768,
+            cluster_id=uuid4(),
+            version=1,
+            is_latest=True,
+            outcome="new_document",
+            source="new",
         )
     )
     store.outbox[envelope.event_id] = envelope

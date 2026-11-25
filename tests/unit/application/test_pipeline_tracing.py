@@ -12,7 +12,13 @@ from tests.unit.fakes.pipeline_harness import PipelineHarness
 from tests.unit.fakes.recording_span import RecordingSpan
 from tests.unit.fakes.recording_tracer import RecordingTracer
 
-STAGES = ["pipeline.upload", "pipeline.parsing", "pipeline.chunking", "pipeline.embedding"]
+STAGES = [
+    "pipeline.upload",
+    "pipeline.parsing",
+    "pipeline.chunking",
+    "pipeline.embedding",
+    "pipeline.versioning",
+]
 
 
 async def _ingest(tracer: RecordingTracer, parser: FakeParser | None = None) -> PipelineHarness:
@@ -62,14 +68,16 @@ async def test_stage_spans_record_file_details_and_counts() -> None:
     upload = tracer.one("pipeline.upload")
     _assert_file_details(upload, "/incoming/law.pdf")
     assert upload.attributes[attr.STORED_PATH] == stored
-    parsing, chunking, embedding = (tracer.one(name) for name in STAGES[1:])
-    for span in (parsing, chunking, embedding):
+    parsing, chunking, embedding, versioning = (tracer.one(name) for name in STAGES[1:])
+    for span in (parsing, chunking, embedding, versioning):
         _assert_file_details(span, stored)
     assert parsing.attributes[attr.PARSE_NODE_COUNT] == 2
     assert json.loads(parsing.attributes[attr.PARSE_NODE_TYPES]) == {"preamble": 1, "section": 1}
     assert chunking.attributes[attr.CHUNK_COUNT] == 2
     assert embedding.attributes[attr.EMBEDDING_COUNT] == 2
     assert embedding.attributes[attr.EMBEDDING_BATCH_COUNT] == 1
+    assert versioning.attributes[attr.VERSIONING_CHUNK_COUNT] == 2
+    assert versioning.attributes[attr.VERSIONING_HAS_EMBEDDING] is True
 
 
 async def test_embedding_batches_are_child_spans_of_the_embedding_stage() -> None:
@@ -128,6 +136,7 @@ async def test_a_finished_pipeline_sends_one_run_trace() -> None:
         "parsing",
         "chunking",
         "embedding",
+        "versioning",
     ]
     assert len(tracer.runs) == 1
 

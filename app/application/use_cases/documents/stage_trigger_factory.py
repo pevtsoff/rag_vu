@@ -6,6 +6,7 @@ from app.domain.documents.document import Document
 from app.domain.documents.pipeline import Pipeline
 from app.domain.documents.pipeline_stage import PipelineStage
 from app.domain.events.document_chunked_event import DocumentChunkedEvent
+from app.domain.events.document_embedded_event import DocumentEmbeddedEvent
 from app.domain.events.document_parsed_event import DocumentParsedEvent
 from app.domain.events.file_received_event import FileReceivedEvent
 from app.domain.events.file_uploaded_event import FileUploadedEvent
@@ -31,9 +32,15 @@ class StageTriggerFactory:
                 structure_path=document.structure_path,
                 node_count=len(await uow.nodes.list_with_text(document.id)),
             )
-        return DocumentChunkedEvent(
+        if stage is PipelineStage.EMBEDDING:
+            return DocumentChunkedEvent(
+                **self._identity(document, pipeline),
+                chunk_count=await uow.chunks.count_for_document(document.id),
+            )
+        return DocumentEmbeddedEvent(
             **self._identity(document, pipeline),
             chunk_count=await uow.chunks.count_for_document(document.id),
+            dimensions=await uow.chunks.embedded_dimensions(document.id) or 0,
         )
 
     def _file_event(

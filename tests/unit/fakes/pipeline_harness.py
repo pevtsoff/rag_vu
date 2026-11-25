@@ -14,6 +14,7 @@ from app.application.use_cases.stages.chunk_stage_job import ChunkStageJob
 from app.application.use_cases.stages.embed_stage_job import EmbedStageJob
 from app.application.use_cases.stages.parse_stage_job import ParseStageJob
 from app.application.use_cases.stages.upload_stage_job import UploadStageJob
+from app.application.use_cases.stages.version_stage_job import VersionStageJob
 from app.domain.events.default_event_registry import default_event_registry
 from tests.unit.fakes.fake_clock import FakeClock
 from tests.unit.fakes.fake_ports import (
@@ -28,7 +29,12 @@ from tests.unit.fakes.in_memory_unit_of_work import uow_factory
 
 
 class PipelineHarness:
-    def __init__(self, parser: FakeParser | None = None, tracer: Tracer | None = None) -> None:
+    def __init__(
+        self,
+        parser: FakeParser | None = None,
+        tracer: Tracer | None = None,
+        embedder: FakeEmbedder | None = None,
+    ) -> None:
         tracer = tracer or NullTracer()
         self.store = InMemoryStore()
         self.uow = uow_factory(self.store)
@@ -36,10 +42,10 @@ class PipelineHarness:
         self.storage = FakeStorage()
         self.parser = parser or FakeParser()
         self.chunker = FakeChunker()
-        self.embedder = FakeEmbedder()
+        self.embedder = embedder or FakeEmbedder()
         self.dispatcher = RecordingDispatcher()
         self.routes = default_event_routes()
-        self.upload = UploadDocument(self.uow, self.storage, tracer)
+        self.upload = UploadDocument(self.uow, self.storage, tracer, self.clock)
         self.relay = RelayOutboxBatch(
             self.uow, self.routes, DeliveryDispatcher(self.dispatcher, self.routes), self.clock, 100
         )
@@ -50,6 +56,7 @@ class PipelineHarness:
             EmbedStageJob(
                 self.clock, TracedEmbedder(self.embedder, tracer, "fake-embed"), batch_size=2
             ),
+            VersionStageJob(self.clock),
         ]
         self.runners = {
             job.consumer: InboxJobRunner(

@@ -13,7 +13,9 @@ async def read_document(doc_id: str, services: ApiServices) -> DocumentResponse:
 
 
 async def search(request: SearchRequest, services: ApiServices) -> list[SearchResponse]:
-    matches = await services.search_documents.execute(request.query, request.top_k)
+    matches = await services.search_documents.execute(
+        request.query, request.top_k, request.latest_only
+    )
     return [
         SearchResponse(
             id=match.node_ids[0] if match.node_ids else "",

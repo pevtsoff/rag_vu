@@ -7,7 +7,8 @@ The project is document-type agnostic. Laws remain supported, including a dedica
 ## What it includes
 
 - A FastAPI API for uploading documents, tracking pipelines, searching, and viewing source nodes.
-- An **event-driven ingestion pipeline** with four stages — **upload → parsing → chunking → embedding** — each a Celery job on its own queue, connected by events stored in PostgreSQL (transactional outbox + idempotent inbox).
+- An **event-driven ingestion pipeline** with five stages — **upload → parsing → chunking → embedding → versioning** — each a Celery job on its own queue, connected by events stored in PostgreSQL (transactional outbox + idempotent inbox).
+- **Document versioning**: a new upload is recognised as a duplicate, a new version of an existing document, or a new document (see [Retrieval logic](#retrieval-logic)).
 - PostgreSQL storage for documents, structured nodes, chunks, vectors, and the event tables.
 - A Chainlit chat interface with vector + BM25 + exact-article retrieval, reranking, and source-grounded answers.
 - Configurable embedding, chat, and reranking providers: Ollama and OpenRouter.
@@ -34,8 +35,9 @@ app/
 POST /upload ─► FileReceivedEvent ─► [upload]    move file to storage, verify size/sha256
              ─► FileUploadedEvent ─► [parsing]   Docling → nodes, structure JSON, image OCR
              ─► DocumentParsedEvent ─► [chunking] hybrid chunker or text splitter
-             ─► DocumentChunkedEvent ─► [embedding] vectors in batches → pipeline SUCCEEDED
-             ─► DocumentEmbeddedEvent
+             ─► DocumentChunkedEvent ─► [embedding] vectors in batches
+             ─► DocumentEmbeddedEvent ─► [versioning] fingerprint, assign cluster/version
+             ─► DocumentVersionedEvent                  → pipeline SUCCEEDED
 ```
 
 Every event has `event_id`, `event_type`, `producer`, `occurred_at` and a JSON payload (always with `document_id` and `pipeline_id`).
@@ -55,7 +57,7 @@ Prerequisites: Docker with the Compose plugin.
 3. Apply database migrations: `make migrate-up`.
 4. Open the API health check at [http://localhost:8080/health](http://localhost:8080/health), the API docs at [http://localhost:8080/docs](http://localhost:8080/docs), and the chat UI at [http://localhost:8000](http://localhost:8000).
 
-Services: `postgres`, `redis`, `api`, `event-processor`, `worker-upload`, `worker-parsing`, `worker-chunking`, `worker-embedding`, `query` (Chainlit), `phoenix` (tracing UI).
+Services: `postgres`, `redis`, `api`, `event-processor`, `worker-upload`, `worker-parsing`, `worker-chunking`, `worker-embedding` (also serves the `versioning` queue), `query` (Chainlit), `phoenix` (tracing UI).
 
 The default `PORT_PREFIX=8` exposes the API on port `8080` and chat on `8000`; other prefixes give `${PORT_PREFIX}080` and `${PORT_PREFIX}000`. Set `RAG_VU_API_BASE_URL` if the API is hosted elsewhere.
 
@@ -66,11 +68,13 @@ Event processing settings (all optional): `EVENT_BATCH_SIZE` (100), `EVENT_POLL_
 The interactive schema is at `/docs`, `/redoc` and `/openapi.json`.
 
 - `GET /health` — `{"status":"healthy"}`.
-- `POST /api/v1/documents/upload` — multipart `file`. An identical upload returns its active pipeline (`duplicate: true`); `force_run=true` cancels it and starts a new one.
+- `POST /api/v1/documents/upload` — multipart `file`. An identical upload returns its active pipeline (`duplicate: true`); `force_run=true` cancels it and starts a new one. The response includes the document's `cluster_id`, `version` and `is_latest`.
+  - `force_upload=replace_latest|create_new` overrides automatic versioning when a latest document already has the same file name: `replace_latest` replaces that latest version (the old row is soft-deleted and the upload takes its version number); `create_new` makes the upload a separate document and, since the name is taken, renames it with the first free suffix (`law.pdf` → `law_2.pdf`, `law_3.pdf`, …; the original name is kept in `doc_metadata.versioning.original_file_name`). Errors are returned before anything is stored: `422` if no latest document has that name, `409` if several do (resend with `cluster_id=<uuid>`), `409` for `create_new` with a file whose content is already stored. Unrelated to `force_run`.
+- `POST /api/v1/documents/{doc_id}/versioning` — fix a versioning decision: `{"mode": "create_new"}` splits the document into its own cluster; `{"mode": "join", "cluster_id": "…"}` makes it that cluster's latest version.
 - `GET /api/v1/documents/{doc_id}` — document metadata and status.
 - `GET /api/v1/documents/{doc_id}/pipelines` — pipeline history, newest first.
-- `GET /api/v1/documents/{doc_id}/rerun/{stage}?force_run=true` — restart from `uploading`, `parsing`, `chunking` or `embedding` (cancels any active run). Without `force_run=true` it returns the active pipeline, or `409` if none is running.
-- `POST /api/v1/documents/search` — `{"query": "...", "top_k": 5}` (`top_k` 1–100); hybrid search returning `id`, `content`, `score`, `node_ids`.
+- `GET /api/v1/documents/{doc_id}/rerun/{stage}?force_run=true` — restart from `uploading`, `parsing`, `chunking`, `embedding` or `versioning` (cancels any active run). Without `force_run=true` it returns the active pipeline, or `409` if none is running.
+- `POST /api/v1/documents/search` — `{"query": "...", "top_k": 5, "latest_only": true}` (`top_k` 1–100); hybrid search returning `id`, `content`, `score`, `node_ids`. `latest_only: false` searches every version.
 - `GET /api/v1/nodes/{node_id}/html` — rendered source node; `404` if missing or not renderable.
 - `GET /api/v2/documents/{doc_id}`, `POST /api/v2/documents/search` — same as v1.
 
@@ -109,7 +113,7 @@ Compose sets the query container's Ollama URL from `OLLAMA_DOCKER_BASE_URL`, whi
 
 ## Ingest documents
 
-Upload a Docling-supported file to `POST /api/v1/documents/upload`. The API streams it to `media/documents/.incoming`, records the document, its pipeline and a `FileReceivedEvent` in one transaction, and returns immediately. The four stage workers then move the file to `media/documents/<document_id>/`, parse it with Docling (Russian and English OCR for scanned PDFs; LibreOffice for RTF), create chunks, and embed them. Pipeline status shows the current stage and any stage error.
+Upload a Docling-supported file to `POST /api/v1/documents/upload`. The API streams it to `media/documents/.incoming`, records the document, its pipeline and a `FileReceivedEvent` in one transaction, and returns immediately. The stage workers then move the file to `media/documents/<document_id>/`, parse it with Docling (Russian and English OCR for scanned PDFs; LibreOffice for RTF), create chunks, embed them, and decide which version cluster the document belongs to. Pipeline status shows the current stage and any stage error.
 
 To restart from a stage, use the rerun endpoint or the CLI:
 
@@ -122,6 +126,37 @@ uv run python -m app.adapters.inbound.cli.rerun_document DOCUMENT_UUID --stage e
 ### Query with the Chainlit UI
 
 Start the Compose services with `make up` (or `make build` on first run), then open [http://localhost:8000](http://localhost:8000) in a browser. The Chainlit UI is exposed on host port `8000` by default. If you change `PORT_PREFIX` from its default `8`, use `http://localhost:${PORT_PREFIX}000` instead. Submit a question in the chat; the service embeds it, retrieves candidates with vector and BM25 search, reranks the results, and asks the configured chat model to answer using the selected passages and their source context. Answers include links to source node HTML at `GET /api/v1/nodes/{node_id}/html`.
+
+### Retrieval logic
+
+Every question goes through the same steps; the chat UI and `POST /documents/search` share them.
+
+1. **Retrieval query.** A short follow-up («а статья 18?») is prefixed with the previous user question, so it keeps its topic.
+2. **Three searches over passages**, each returning its best candidates:
+   - **vector**: cosine similarity between the question's embedding and every chunk (pgvector, the column matching the embedder's size);
+   - **BM25**: full-text ranking of node text (`pg_textsearch`);
+   - **article**: an exact match on «статья N» when the question names an article, because embeddings match identifiers poorly.
+3. **Fusion.** The three rankings are combined with reciprocal rank fusion (RRF, `RRF_K`), so a passage found by several searches ranks higher. Questions asking for a list («какие основания…») also get the whole parent article.
+4. **Reranking.** The best `RERANK_CANDIDATE_K` candidates are reordered by the reranker (`RERANK_PROVIDER`); the top `TOP_K` go to the model.
+5. **Answer.** The chat model answers from those passages only, citing the section and article from each passage's breadcrumbs; the application appends links to the source nodes.
+
+**Versions.** Ingestion groups versions of one document into a *cluster* (`documents.cluster_id`, `version`, `is_latest`). After embedding, the versioning stage fingerprints the document (a length-weighted average of its chunk embeddings and a 128-value MinHash of its text) and decides:
+
+- the same legal identifier (for a Russian law: date and number, e.g. `07.02.1992 N 2300-1`) as another document's latest version → a **new version** of it, or a **duplicate** if the text is practically identical;
+- without an identifier, compared only with each cluster's latest version: `VERSIONING_SEM_SIM` (0.96) semantic similarity **and** at least `VERSIONING_LEX_SIM_MIN` (0.5) shared wording → a **new version**; near-identical → a **duplicate**; otherwise a **new document**. A different identifier never merges.
+
+Duplicates and soft-deleted documents are never searched. The decision is stored in `doc_metadata.versioning`. Only 768-dimension embeddings (`qwen3-embedding:0.6b`) are fingerprinted; with other embedders documents are versioned by legal identifier only.
+
+**Latest only vs every version.** By default the three searches see only latest versions. A question about changes («что изменилось…», «в редакции 2019 года», «в предыдущей версии») searches every version instead:
+
+- each search over-fetches (`MULTI_VERSION_OVERFETCH`, 4×);
+- each version contributes at most `K_PER_VERSION` (2) passages — a ceiling, not a quota;
+- a version whose best passage scores below `VERSION_RELEVANCE_FLOOR` (0.6) × the best overall is dropped;
+- at most `MAX_VERSIONS` (4) versions per document stay: versions named in the question first, then the latest one, then the best-scoring;
+- the reranker keeps up to `MULTI_VERSION_CHUNK_BUDGET` (10) passages, so the versions of one passage survive together;
+- a passage that is identical in several versions is sent once, labelled with all of them, and passages are ordered by version, oldest first.
+
+Every passage sent to the model is labelled `[Doc: <file> | v<n> | ред. от <date>]` (or `v1–v3 (без изменений)` for an unchanged one). When two or more versions of a document are in the context, the model is told to compare them and say which version each difference comes from.
 
 ### Search directly in PostgreSQL
 

@@ -39,3 +39,26 @@ class AnswerGenerationError(ApplicationError):
 
 class LawImportError(ApplicationError):
     """A law document could not be fetched or parsed."""
+
+
+class VersioningTargetNotFoundError(ApplicationError):
+    """``force_upload`` names a file (or cluster) with no latest document to act on."""
+
+
+class AmbiguousVersioningTargetError(ApplicationError):
+    """Several clusters' latest versions share the file name; ``cluster_id`` must pick one."""
+
+    def __init__(self, file_name: str, cluster_ids: list[str]) -> None:
+        self.cluster_ids = cluster_ids
+        super().__init__(
+            f"{len(cluster_ids)} documents are called {file_name!r}; resend with cluster_id, "
+            f"one of: {', '.join(cluster_ids)}"
+        )
+
+
+class DuplicateContentError(ApplicationError):
+    """An identical file is already stored, so it cannot become a separate document."""
+
+
+class ClusterNotFoundError(ApplicationError):
+    """The requested document cluster has no live version."""

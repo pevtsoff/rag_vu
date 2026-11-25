@@ -50,6 +50,32 @@ class SqlAlchemyChunkRepository(ChunkRepository):
         )
         return int((await self._session.execute(statement)).scalar_one())
 
+    async def list_embedded(
+        self, document_id: UUID, dimensions: int
+    ) -> list[tuple[str, list[float]]]:
+        column = getattr(ChunkModel, vector_column_for(dimensions))
+        statement = (
+            select(ChunkModel.text, column)
+            .join(NodeModel, NodeModel.id == ChunkModel.node_id)
+            .where(NodeModel.document_id == document_id, column.is_not(None))
+            .order_by(NodeModel.path, ChunkModel.position)
+        )
+        rows = (await self._session.execute(statement)).all()
+        return [(row[0], [float(value) for value in row[1]]) for row in rows]
+
+    async def embedded_dimensions(self, document_id: UUID) -> int | None:
+        for dimensions, name in VECTOR_COLUMNS.items():
+            column = getattr(ChunkModel, name)
+            statement = (
+                select(ChunkModel.id)
+                .join(NodeModel, NodeModel.id == ChunkModel.node_id)
+                .where(NodeModel.document_id == document_id, column.is_not(None))
+                .limit(1)
+            )
+            if (await self._session.execute(statement)).first() is not None:
+                return dimensions
+        return None
+
     async def store_embeddings(self, vectors: dict[UUID, list[float]], dimensions: int) -> None:
         if not vectors:
             return

@@ -20,13 +20,13 @@ def _rows(engine: Engine, sql: str) -> list[tuple]:
         return [tuple(row) for row in connection.execute(text(sql))]
 
 
-async def test_an_upload_runs_all_four_stages(
+async def test_an_upload_runs_all_five_stages(
     infrastructure: Infrastructure, sync_engine: Engine
 ) -> None:
     runner = PipelineRunner(infrastructure)
     result = await runner.upload.execute(BytesStream(b"pdf data"), "law.pdf", "application/pdf")
 
-    assert await runner.drain() == ["upload", "parsing", "chunking", "embedding"]
+    assert await runner.drain() == ["upload", "parsing", "chunking", "embedding", "versioning"]
 
     assert _rows(
         sync_engine, "SELECT event_type, producer, status FROM outbox_events ORDER BY occurred_at"
@@ -36,16 +36,19 @@ async def test_an_upload_runs_all_four_stages(
         ("DocumentParsedEvent", "parsing", "PUBLISHED"),
         ("DocumentChunkedEvent", "chunking", "PUBLISHED"),
         ("DocumentEmbeddedEvent", "embedding", "PUBLISHED"),
+        ("DocumentVersionedEvent", "versioning", "PUBLISHED"),
     ]
     assert set(_rows(sync_engine, "SELECT consumer, status, attempts FROM inbox_events")) == {
         ("upload", "PROCESSED", 1),
         ("parsing", "PROCESSED", 1),
         ("chunking", "PROCESSED", 1),
         ("embedding", "PROCESSED", 1),
+        ("versioning", "PROCESSED", 1),
     }
     assert _rows(
-        sync_engine, "SELECT stage, status, uploaded, parsed, chunked, embedded FROM pipelines"
-    ) == [("embedding", "SUCCEEDED", True, True, True, True)]
+        sync_engine,
+        "SELECT stage, status, uploaded, parsed, chunked, embedded, versioned FROM pipelines",
+    ) == [("versioning", "SUCCEEDED", True, True, True, True, True)]
     [(status, file_path)] = _rows(sync_engine, "SELECT status, file_path FROM documents")
     assert status == "SUCCEEDED" and file_path.endswith(f"{result.document.id}/law.pdf")
     assert _rows(sync_engine, "SELECT count(*), count(embedding_small) FROM chunks") == [(2, 2)]
@@ -112,7 +115,7 @@ async def test_rerun_from_embedding_only_reembeds(
         result.document.id, PipelineStage.EMBEDDING, True
     )
 
-    assert await runner.drain() == ["embedding"]
+    assert await runner.drain() == ["embedding", "versioning"]
     assert _rows(sync_engine, "SELECT id FROM chunks ORDER BY id") == chunk_ids
     statuses = _rows(sync_engine, "SELECT status FROM pipelines ORDER BY created_at")
     assert statuses == [("SUCCEEDED",), ("SUCCEEDED",)]

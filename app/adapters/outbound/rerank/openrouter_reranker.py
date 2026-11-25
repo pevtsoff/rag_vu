@@ -13,14 +13,17 @@ class OpenRouterReranker(Reranker):
         self._model = model
         self._top_k = top_k
 
-    async def rerank(self, query: str, matches: list[RetrievedMatch]) -> list[RetrievedMatch]:
+    async def rerank(
+        self, query: str, matches: list[RetrievedMatch], limit: int | None = None
+    ) -> list[RetrievedMatch]:
         if not matches:
             return []
+        top_k = limit or self._top_k
         body = {
             "model": self._model,
             "query": query,
             "documents": [match.text for match in matches],
-            "top_n": min(self._top_k, len(matches)),
+            "top_n": min(top_k, len(matches)),
         }
         headers = {"Authorization": f"Bearer {self._api_key}"}
         async with self._client_factory() as client:
@@ -29,7 +32,7 @@ class OpenRouterReranker(Reranker):
         reranked = _ranked_matches(response.json(), matches)
         if not reranked:
             raise ValueError("Rerank API returned no usable ranked results.")
-        return reranked[: self._top_k]
+        return reranked[:top_k]
 
 
 def _ranked_matches(payload: object, matches: list[RetrievedMatch]) -> list[RetrievedMatch]:

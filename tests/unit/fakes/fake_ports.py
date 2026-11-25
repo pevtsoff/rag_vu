@@ -108,15 +108,21 @@ class FakeRetriever(Retriever):
     def __init__(self, matches: list[RetrievedMatch]) -> None:
         self.matches = matches
         self.calls: list[tuple[list[float], str]] = []
+        self.latest_only: list[bool] = []
 
-    async def retrieve(self, query_vector: list[float], query: str) -> list[RetrievedMatch]:
+    async def retrieve(
+        self, query_vector: list[float], query: str, latest_only: bool = True
+    ) -> list[RetrievedMatch]:
         self.calls.append((query_vector, query))
+        self.latest_only.append(latest_only)
         return self.matches
 
 
 class ReversingReranker(Reranker):
-    async def rerank(self, query: str, matches: list[RetrievedMatch]) -> list[RetrievedMatch]:
-        return list(reversed(matches))
+    async def rerank(
+        self, query: str, matches: list[RetrievedMatch], limit: int | None = None
+    ) -> list[RetrievedMatch]:
+        return list(reversed(matches))[:limit]
 
 
 class FakeChatModel(ChatModel):

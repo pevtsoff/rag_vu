@@ -17,7 +17,7 @@ async def test_an_imported_law_is_chunked_by_parts_and_embedded(
     )
     runner = PipelineRunner(infrastructure)
 
-    assert await runner.drain() == ["chunking", "embedding"]
+    assert await runner.drain() == ["chunking", "embedding", "versioning"]
 
     with sync_engine.connect() as connection:
         status = connection.execute(text("SELECT status FROM pipelines")).scalar()
