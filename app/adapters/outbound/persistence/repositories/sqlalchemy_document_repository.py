@@ -18,6 +18,8 @@ _COPIED_FIELDS = (
     "sha256",
     "doc_metadata",
     "version",
+    "cluster_id",
+    "is_latest",
 )
 
 
