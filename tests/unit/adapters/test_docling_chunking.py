@@ -5,6 +5,10 @@ from uuid import uuid4
 from app.adapters.outbound.chunking.docling_chunk_mapper import heading_map, make_docling_chunks
 from app.adapters.outbound.chunking.docling_hybrid_chunker import DoclingHybridChunker
 from app.adapters.outbound.chunking.hybrid_chunker_factory import create_hybrid_chunker
+from app.adapters.outbound.chunking.table_text_serializer import (
+    TableTextSerializer,
+    TableTextSerializerProvider,
+)
 from app.domain.documents.node import Node
 
 
@@ -56,9 +60,14 @@ def test_chunker_factory_uses_tokenizer_and_budget() -> None:
             observed["model_name"] = name
             return "loaded-tokenizer"
 
+    def hybrid_chunker(tokenizer: object, serializer_provider: object) -> object:
+        observed["serializer_provider"] = serializer_provider
+        return tokenizer
+
     create_hybrid_chunker(
-        "Qwen/Qwen3-Embedding-0.6B", 384, lambda tokenizer: tokenizer, Tokenizer, AutoTokenizer
+        "Qwen/Qwen3-Embedding-0.6B", 384, hybrid_chunker, Tokenizer, AutoTokenizer
     )
+    assert isinstance(observed.pop("serializer_provider"), TableTextSerializerProvider)
     assert observed == {
         "model_name": "Qwen/Qwen3-Embedding-0.6B",
         "tokenizer": "loaded-tokenizer",
@@ -102,3 +111,72 @@ async def test_hybrid_chunker_uses_structure_file_and_chunks_images_separately(
         (section.id, 1),
         (image.id, 0),
     ]
+
+
+def _chunk(*headings: str) -> SimpleNamespace:
+    return SimpleNamespace(meta=SimpleNamespace(headings=list(headings)))
+
+
+def _nodes(*breadcrumbs: list[str]) -> list[Node]:
+    document_id = uuid4()
+    return [Node(document_id=document_id, node_type="section", breadcrumbs=b) for b in breadcrumbs]
+
+
+def test_chunk_maps_to_a_nested_node_by_its_own_heading() -> None:
+    chapter, verse = _nodes(["Doc", "Page 3", "ОТРЫВОК I"], ["Doc", "Page 4", "ОТРЫВОК I", "(7)"])
+    mapping = heading_map([chapter, verse])
+    assert mapping[("(7)",)] == verse.id
+    chunks = make_docling_chunks(
+        object(), FakeHybridChunker([_chunk("ПРЕДИСЛОВИЕ", "(7)")]), mapping
+    )
+    assert chunks[0].node_id == verse.id
+
+
+def test_ambiguous_heading_is_not_aliased() -> None:
+    first, second = _nodes(["Doc", "A", "* * *"], ["Doc", "B", "* * *"])
+    assert ("* * *",) not in heading_map([first, second])
+
+
+def test_chunk_under_a_part_of_a_merged_chapter_title_maps_to_that_chapter() -> None:
+    title_page, preface, chapter, later = _nodes(
+        ["Doc", "Page 1", "ГОЛОС БЕЗМОЛВИЯ ДВА ПУТИ СЕМЬ ВРАТ"],
+        ["Doc", "Page 2", "ПРЕДИСЛОВИЕ"],
+        ["Doc", "Page 7", "ОТРЫВОК II из Книги ДВА ПУТИ"],
+        ["Doc", "Page 11", "ОТРЫВОК III из Книги СЕМЬ ВРАТ"],
+    )
+    mapping = heading_map([title_page, preface, chapter, later])
+    # The title page also contains both phrases; document order says which node is meant.
+    fake = FakeHybridChunker([_chunk("ПРЕДИСЛОВИЕ"), _chunk("ДВА ПУТИ"), _chunk("СЕМЬ ВРАТ")])
+    assert [c.node_id for c in make_docling_chunks(object(), fake, mapping)] == [
+        preface.id,
+        chapter.id,
+        later.id,
+    ]
+
+
+async def test_contents_nodes_are_not_chunked(tmp_path: Path) -> None:
+    structure = tmp_path / "doc.docling.json"
+    structure.write_text("{}")
+    document_id = uuid4()
+    contents = Node(
+        document_id=document_id, node_type="contents", text="C", breadcrumbs=["Doc", "СОДЕРЖАНИЕ"]
+    )
+    body = Node(document_id=document_id, node_type="section", text="S", breadcrumbs=["Doc", "Body"])
+    fake = FakeHybridChunker(
+        [_chunk("СОДЕРЖАНИЕ"), _chunk("Body")], text="chunk text"
+    )
+    chunker = DoclingHybridChunker(lambda: fake, document_loader=lambda path: "doc")
+    chunks = await chunker.chunk([contents, body], str(structure))
+    assert [chunk.node_id for chunk in chunks] == [body.id]
+
+
+def test_table_serializer_repeats_markdown_header_but_not_contents_lines() -> None:
+    serializer = TableTextSerializer()
+    header, body = serializer.get_header_and_body_lines(
+        table_text="| a | b |\n| --- | --- |\n| 1 | 2 |"
+    )
+    assert (header, body) == (["| a | b |", "| --- | --- |"], ["| 1 | 2 |"])
+    assert serializer.get_header_and_body_lines(table_text="A — p. 1\nB — p. 2") == (
+        [],
+        ["A — p. 1", "B — p. 2"],
+    )

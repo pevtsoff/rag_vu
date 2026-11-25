@@ -12,6 +12,8 @@ class NodeType(StrEnum):
     HEADER = "header"
     FOOTER = "footer"
     IMAGE = "image"
+    # A table of contents: kept for readers (and for chapter structure), never searched.
+    CONTENTS = "contents"
 
     @classmethod
     def retrievable(cls) -> frozenset["NodeType"]:

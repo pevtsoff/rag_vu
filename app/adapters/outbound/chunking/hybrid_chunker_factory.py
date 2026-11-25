@@ -6,6 +6,8 @@ from docling.chunking import HybridChunker
 from docling_core.transforms.chunker.tokenizer.huggingface import HuggingFaceTokenizer
 from transformers import AutoTokenizer
 
+from app.adapters.outbound.chunking.table_text_serializer import TableTextSerializerProvider
+
 
 def create_hybrid_chunker(
     model_name: str,
@@ -22,4 +24,4 @@ def create_hybrid_chunker(
     tokenizer = tokenizer_type(
         tokenizer=auto_tokenizer.from_pretrained(model_name), max_tokens=max_tokens
     )
-    return hybrid_chunker(tokenizer=tokenizer)
+    return hybrid_chunker(tokenizer=tokenizer, serializer_provider=TableTextSerializerProvider())

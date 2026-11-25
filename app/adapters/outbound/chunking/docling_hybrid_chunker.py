@@ -44,6 +44,8 @@ class DoclingHybridChunker(Chunker):
         # Image nodes are excluded from the heading map so their own chunk positions
         # can never collide with the document-wide positions of Docling chunks.
         chunks = make_docling_chunks(document, self._hybrid_chunker(), heading_map(text_nodes))
+        unsearched = {node.id for node in text_nodes if node.node_type == NodeType.CONTENTS.value}
+        chunks = [chunk for chunk in chunks if chunk.node_id not in unsearched]
         return [*chunks, *make_chunks(image_nodes)]
 
     def _hybrid_chunker(self) -> Any:

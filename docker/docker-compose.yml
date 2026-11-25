@@ -145,6 +145,31 @@ services:
     container_name: rag_vu-worker-embedding
     command: ["celery", "-A", "app.adapters.inbound.celery_jobs.celery_app:celery_app", "worker", "--loglevel=INFO", "--concurrency=2", "--queues=embedding,versioning"]
 
+  # Celery monitoring UI at http://localhost:${PORT_PREFIX}555. Pipeline state itself lives in
+  # PostgreSQL (see celery_app.py); this only shows the job transport: queues, workers and
+  # task runs. History is kept in the volume. Local dev stack with no auth - set
+  # FLOWER_BASIC_AUTH=user:password in the environment before exposing it anywhere.
+  flower:
+    <<: *app-image
+    container_name: rag_vu-flower
+    environment:
+      CELERY_BROKER_URL: redis://redis:6379/0
+    ports:
+      - "${PORT_PREFIX}555:5555"
+    volumes:
+      - ../app:/app/app
+      - rag_vu-flower-data:/data
+    command: ["celery", "-A", "app.adapters.inbound.celery_jobs.celery_app:celery_app", "flower", "--port=5555", "--persistent=True", "--db=/data/flower.db"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5555/healthcheck', timeout=5)"]
+      interval: 15s
+      timeout: 5s
+      start_period: 30s
+      retries: 5
+    depends_on:
+      redis:
+        condition: service_healthy
+
   query:
     <<: *app-image
     container_name: rag_vu-query
@@ -248,3 +273,4 @@ volumes:
   rag_vu-redis-data:
   rag_vu-hf-cache:
   rag_vu-phoenix-data:
+  rag_vu-flower-data:

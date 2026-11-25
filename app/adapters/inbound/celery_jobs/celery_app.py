@@ -22,6 +22,9 @@ celery_app.conf.update(
     task_acks_late=True,
     task_reject_on_worker_lost=True,
     worker_prefetch_multiplier=1,
+    # Task events feed Flower (task lists, timings, failures); they cost a few small messages.
+    worker_send_task_events=True,
+    task_send_sent_event=True,
     task_queues=[
         Queue(ROUTES.route_for_consumer(name).queue) for name in sorted(ROUTES.consumers())
     ],
