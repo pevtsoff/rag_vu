@@ -55,6 +55,10 @@ class AppSettings(BaseSettings):
     ollama_model: str = "gpt-oss:20b"
     ollama_rerank_model: str = "gpt-oss:20b"
     ollama_timeout_seconds: int = 300
+    # gpt-oss (and other hidden-reasoning models) spend part of this budget on internal
+    # reasoning before the visible answer; too low and Ollama truncates with no content at
+    # all, 200 OK and done_reason="length" (see OllamaChatModel._completion).
+    ollama_max_answer_tokens: int = 2000
     top_k: int = 5
     retrieval_candidate_k: int = 30
     rerank_candidate_k: int = 20

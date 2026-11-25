@@ -6,6 +6,9 @@ from functools import cached_property
 from app.adapters.outbound.messaging.celery_client import create_celery_client
 from app.adapters.outbound.messaging.celery_job_dispatcher import CeleryJobDispatcher
 from app.application.use_cases.events.delivery_dispatcher import DeliveryDispatcher
+from app.application.use_cases.events.reclaim_orphaned_inbox_messages import (
+    ReclaimOrphanedInboxMessages,
+)
 from app.application.use_cases.events.redeliver_inbox_messages import RedeliverInboxMessages
 from app.application.use_cases.events.relay_outbox_batch import RelayOutboxBatch
 from app.bootstrap.infrastructure import Infrastructure
@@ -40,5 +43,14 @@ class EventProcessorContainer:
             self.delivery_dispatcher,
             self.infrastructure.clock,
             timedelta(seconds=self._settings.inbox_redelivery_after_seconds),
+            self._settings.event_batch_size,
+        )
+
+    @cached_property
+    def startup_reclaim(self) -> ReclaimOrphanedInboxMessages:
+        return ReclaimOrphanedInboxMessages(
+            self.infrastructure.unit_of_work,
+            self.delivery_dispatcher,
+            self.infrastructure.clock,
             self._settings.event_batch_size,
         )

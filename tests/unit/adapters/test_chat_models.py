@@ -54,6 +54,46 @@ async def test_ollama_empty_answer_is_an_error() -> None:
         await model.complete(MESSAGES)
 
 
+async def test_ollama_defaults_to_a_2000_token_answer_budget() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert body(request)["options"]["num_predict"] == 2000
+        return httpx.Response(200, json={"message": {"content": "Answer"}})
+
+    model = OllamaChatModel(mock_clients(handler), "http://o", "m", 1)
+    await model.complete(MESSAGES)
+
+
+async def test_ollama_uses_a_configured_answer_token_budget() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert body(request)["options"]["num_predict"] == 500
+        return httpx.Response(200, json={"message": {"content": "Answer"}})
+
+    model = OllamaChatModel(mock_clients(handler), "http://o", "m", 1, max_answer_tokens=500)
+    await model.complete(MESSAGES)
+
+
+async def test_ollama_reports_budget_exhaustion_distinctly_from_a_true_empty_answer() -> None:
+    payload = {"message": {}, "done_reason": "length"}
+    model = OllamaChatModel(
+        mock_clients(lambda r: httpx.Response(200, json=payload)),
+        "http://o",
+        "m",
+        1,
+        max_answer_tokens=400,
+    )
+    with pytest.raises(RuntimeError, match="exhausted the completion budget"):
+        await model.complete(MESSAGES)
+
+
+async def test_ollama_reports_reasoning_only_content_distinctly() -> None:
+    payload = {"message": {"thinking": "I should answer X because..."}, "done_reason": "stop"}
+    model = OllamaChatModel(
+        mock_clients(lambda r: httpx.Response(200, json=payload)), "http://o", "m", 1
+    )
+    with pytest.raises(RuntimeError, match="only reasoning/thinking content"):
+        await model.complete(MESSAGES)
+
+
 async def test_openrouter_sends_the_model_chain_and_returns_content() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         assert request.url.path == "/v1/chat/completions"

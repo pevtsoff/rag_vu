@@ -34,16 +34,31 @@ x-worker: &worker
     resources:
       limits:
         cpus: "2.0"
+  # Give an in-flight stage (parsing/embedding can run long) a real chance to finish and
+  # ack cleanly on `docker compose stop`/`down` before Docker sends SIGKILL. A task that
+  # still doesn't make it is not lost: the inbox row stays claimed in PostgreSQL and the
+  # event-processor redelivers it, immediately on its own restart or after its lock
+  # timeout, so the pipeline always resumes at the same stage either way.
+  stop_grace_period: 120s
 
 services:
+  # AOF persistence (fsync at most once a second) plus an RDB snapshot on SIGTERM, so a
+  # `docker compose down`/`up` cycle does not drop jobs that were already enqueued but not
+  # yet claimed by a worker. This is a durability safety net, not the correctness mechanism:
+  # pipeline state lives in PostgreSQL's outbox/inbox tables regardless (see celery_app.py),
+  # and the event-processor reclaims anything left mid-stage on its own restart.
   redis:
     image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes", "--appendfsync", "everysec"]
+    volumes:
+      - rag_vu-redis-data:/data
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
       timeout: 3s
       retries: 10
     restart: unless-stopped
+    stop_grace_period: 30s
 
   postgres:
     build:
@@ -105,6 +120,10 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+    # On startup this reclaims any inbox message left mid-stage by the previous run (see
+    # ReclaimOrphanedInboxMessages); on shutdown its loop iteration is a few short DB
+    # round-trips, so it always exits well within this.
+    stop_grace_period: 30s
 
   worker-upload:
     <<: *worker
@@ -188,5 +207,6 @@ services:
 
 volumes:
   rag_vu-pgdata:
+  rag_vu-redis-data:
   rag_vu-hf-cache:
   rag_vu-phoenix-data:

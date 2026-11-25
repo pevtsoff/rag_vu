@@ -87,6 +87,7 @@ class QueryContainer:
                 settings.ollama_base_url,
                 settings.ollama_model,
                 settings.ollama_timeout_seconds,
+                settings.ollama_max_answer_tokens,
             )
         if provider != "openrouter":
             raise ValueError("QUERY_LLM_PROVIDER must be 'ollama' or 'openrouter'.")

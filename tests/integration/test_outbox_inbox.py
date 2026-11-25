@@ -102,3 +102,25 @@ async def test_expired_locks_and_lost_dispatches_are_redelivered(
     assert fresh not in {d.inbox_id for d in deliveries}
     async with infrastructure.unit_of_work() as uow:
         assert await uow.inbox.lock_redeliverable(later, later - timedelta(minutes=5), 10) == []
+
+
+async def test_release_orphaned_locks_redelivers_processing_messages_right_away(
+    infrastructure: Infrastructure,
+) -> None:
+    now = infrastructure.clock.now()
+    async with infrastructure.unit_of_work() as uow:
+        stuck = await uow.inbox.receive(_envelope(), "embedding", now)
+        waiting = await uow.inbox.receive(_envelope(), "parsing", now)
+        # Locked for the next hour: a short time later is not enough for lock_redeliverable.
+        await uow.inbox.claim(stuck, uuid4(), now, now + timedelta(hours=1))
+        await uow.commit()
+    soon = now + timedelta(seconds=1)
+    async with infrastructure.unit_of_work() as uow:
+        assert await uow.inbox.lock_redeliverable(soon, soon - timedelta(minutes=5), 10) == []
+        deliveries = await uow.inbox.release_orphaned_locks(soon, 10)
+        await uow.commit()
+    assert {d.inbox_id for d in deliveries} == {stuck}
+    assert waiting not in {d.inbox_id for d in deliveries}
+    async with infrastructure.unit_of_work() as uow:
+        # Now claimable again, as a freshly received message would be.
+        assert await uow.inbox.claim(stuck, uuid4(), soon, soon + timedelta(hours=1)) is not None

@@ -108,6 +108,24 @@ class SqlAlchemyInboxRepository(InboxRepository):
         await self.mark_dispatched([row[0] for row in rows], now)
         return [InboxDelivery(inbox_id=row[0], consumer=row[1]) for row in rows]
 
+    async def release_orphaned_locks(self, now: datetime, limit: int) -> list[InboxDelivery]:
+        statement = (
+            select(InboxEventModel.id, InboxEventModel.consumer)
+            .where(InboxEventModel.status == InboxStatus.PROCESSING.value)
+            .order_by(InboxEventModel.received_at)
+            .limit(limit)
+            .with_for_update(skip_locked=True)
+        )
+        rows = (await self._session.execute(statement)).all()
+        if rows:
+            await self._update(
+                InboxEventModel.id.in_([row[0] for row in rows]),
+                status=InboxStatus.RECEIVED.value,
+                locked_until=None,
+                dispatched_at=now,
+            )
+        return [InboxDelivery(inbox_id=row[0], consumer=row[1]) for row in rows]
+
     async def _update(self, condition: object, **values: object) -> None:
         statement = (
             update(InboxEventModel)

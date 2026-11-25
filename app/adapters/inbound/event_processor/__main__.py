@@ -9,6 +9,8 @@ from app.bootstrap.event_processor_container import EventProcessorContainer
 from app.bootstrap.infrastructure import Infrastructure
 from app.config.app_settings import get_settings
 
+logger = logging.getLogger(__name__)
+
 
 async def main() -> None:
     settings = get_settings()
@@ -21,6 +23,11 @@ async def main() -> None:
     for signal_number in (signal.SIGINT, signal.SIGTERM):
         asyncio.get_running_loop().add_signal_handler(signal_number, stop.set)
     try:
+        # One-off recovery: anything still PROCESSING predates this process, so it was
+        # abandoned by a worker that can no longer exist (see ReclaimOrphanedInboxMessages).
+        reclaimed = await container.startup_reclaim.execute()
+        if reclaimed:
+            logger.info("Reclaimed %s inbox message(s) left mid-stage by the previous run", reclaimed)
         await loop.run(stop)
     finally:
         await infrastructure.dispose()

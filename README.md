@@ -15,7 +15,7 @@ The project is document-type agnostic. Laws remain supported, including a dedica
 
 ## Architecture
 
-The code follows Hexagonal (Ports and Adapters) architecture. See [docs/architecture/refactoring_plan.md](docs/architecture/refactoring_plan.md) for the full design.
+The code follows Hexagonal (Ports and Adapters) architecture. See [docs/architecture/refactoring_plan.md](docs/architecture/refactoring_plan.md) for the full design. Sequence diagrams of the upload, pipeline, versioning and query flows are in [docs/diagrams](docs/diagrams/README.md).
 
 ```
 app/

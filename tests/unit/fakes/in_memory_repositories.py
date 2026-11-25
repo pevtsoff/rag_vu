@@ -310,6 +310,12 @@ class InMemoryInboxRepository(InboxRepository):
         await self.mark_dispatched([r.id for r in due], now)
         return [InboxDelivery(r.id, r.consumer) for r in due]
 
+    async def release_orphaned_locks(self, now: datetime, limit: int) -> list[InboxDelivery]:
+        stuck = [r for r in self._store.inbox.values() if r.status == "PROCESSING"][:limit]
+        for record in stuck:
+            record.status, record.locked_until, record.dispatched_at = "RECEIVED", None, now
+        return [InboxDelivery(r.id, r.consumer) for r in stuck]
+
 
 def _abandoned(record: InboxRecord, now: datetime) -> bool:
     return (

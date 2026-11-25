@@ -35,3 +35,12 @@ class InboxRepository(ABC):
         self, now: datetime, dispatched_before: datetime, limit: int
     ) -> list[InboxDelivery]:
         """Stamp and return messages whose job was lost or abandoned."""
+
+    @abstractmethod
+    async def release_orphaned_locks(self, now: datetime, limit: int) -> list[InboxDelivery]:
+        """Stamp and return every still-``PROCESSING`` message, ignoring its lock timeout.
+
+        For use once at process startup only: if this process is starting, every worker
+        that could have held one of these locks is gone (the whole stack restarted), so
+        waiting out the lock timeout would stall those pipelines for no reason.
+        """
